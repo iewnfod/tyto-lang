@@ -1,9 +1,11 @@
 pub mod arrays;
 pub mod collections;
+pub mod files;
 pub mod fns;
 pub mod heaps;
 pub mod maps;
 pub mod strings;
+pub mod system;
 
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
@@ -16,6 +18,8 @@ pub fn call_native(
 ) -> RtResult<Value> {
     match name {
         "print" | "println" => print_impl(name, interp, args, span),
+        _ if name.starts_with("fs.") => files::call(&name[3..], interp, args, span),
+        _ if name.starts_with("sys.") => system::call(&name[4..], interp, args, span),
         _ => fns::call_global(name, interp, args, span),
     }
 }

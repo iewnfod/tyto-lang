@@ -36,9 +36,11 @@ const CLASSES = [
 ];
 
 const CONSTANTS = [
-    ['EMPTY', 'EMPTY', '哨兵值：空堆 pop()/peek() 的返回'],
+    ['EMPTY', 'EMPTY', '哨兵值：空堆/栈/队列 pop()/peek() 的返回'],
     ['inf', 'inf', '正无穷（1 / 0）'],
     ['nan', 'nan', '非数（0 / 0）'],
+    ['fs', 'fs.*', '文件命名空间：read_file / read_lines / write_file / append_file / exists / list_dir'],
+    ['sys', 'sys.*', '系统命名空间：shell / get_env / args'],
 ];
 
 // 无类型信息：`.` 后给出所有原生方法，detail 标注适用类型
@@ -52,6 +54,16 @@ const METHODS = [
     ['back', '.back()', 'queue 队尾（不移除）；空返回 EMPTY'],
     ['len', '.len()', 'array / string / map / maxheap / minheap / stack / queue'],
     ['is_empty', '.is_empty()', 'array / string / map / maxheap / minheap / stack / queue'],
+    // 命名空间 fs.* / sys.*（fs.foo() 形式调用）
+    ['read_file', 'fs.read_file(path) → string', '整文件读入；不存在/非 UTF-8 报错'],
+    ['read_lines', 'fs.read_lines(path) → array', '按行读入（去行尾换行）'],
+    ['write_file', 'fs.write_file(path, content)', '覆盖写；父目录必须存在'],
+    ['append_file', 'fs.append_file(path, content)', '追加写；不存在则创建'],
+    ['exists', 'fs.exists(path) → bool', '文件/目录存在性'],
+    ['list_dir', 'fs.list_dir(path) → array', '目录条目名（排序）'],
+    ['shell', 'sys.shell(cmd) → {status, stdout, stderr}', 'sh -c 执行；非零退出不报错；输出原样'],
+    ['get_env', 'sys.get_env(name) → string | null', '环境变量；未设置返回 null'],
+    ['args', 'sys.args() → array', '脚本命令行参数'],
     ['contains', '.contains(x)', 'array / string 是否包含'],
     ['index_of', '.index_of(x)', 'array / string 首次出现的下标；未找到 -1'],
     ['join', '.join(sep?)', 'array 连接为字符串；默认 ","'],

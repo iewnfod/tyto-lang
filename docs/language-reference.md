@@ -14,6 +14,7 @@
 - [内置类型：MaxHeap / MinHeap](#内置类型maxheap--minheap)
 - [内置类型：Stack / Queue](#内置类型stack--queue)
 - [全局函数](#全局函数)
+- [命名空间：fs / sys](#命名空间fs--sys)
 - [CLI 与 REPL](#cli-与-repl)
 - [与 JS / Rust 的差异速查](#与-js--rust-的差异速查)
 
@@ -500,13 +501,58 @@ if line == null { println("结束") }
 |---|---|
 | `EMPTY` | 哨兵（空堆/空栈/空队列 的 pop/peek/pop_front/front/back 返回它；`== EMPTY` 判断；真值为假） |
 | `inf` / `nan` | 正无穷 / 非数 |
+| `fs` / `sys` | 命名空间对象（见下节） |
+
+---
+
+## 命名空间：fs / sys
+
+文件与系统操作不走全局函数，收敛在两个预置命名空间对象里（v2 模块系统落地后无缝升级为真模块）。所有路径按 UTF-8 字符串处理。
+
+### fs —— 文件
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| read_file | `fs.read_file(path) → string` | 整文件读入；不存在/非 UTF-8 报错 |
+| read_lines | `fs.read_lines(path) → array` | 按行读入（去行尾换行；末尾换行不产生空尾元素） |
+| write_file | `fs.write_file(path, content)` | 覆盖写；不存在则创建；**父目录必须存在**，否则报错 |
+| append_file | `fs.append_file(path, content)` | 追加写；不存在则创建 |
+| exists | `fs.exists(path) → bool` | 文件/目录存在性 |
+| list_dir | `fs.list_dir(path) → array` | 目录内条目名（按名排序，含子目录） |
+
+```
+for line in fs.read_lines("data.txt") {
+    println(num(line) * 2)
+}
+fs.write_file("out.txt", "done\n")
+```
+
+### sys —— 系统
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| shell | `sys.shell(cmd) → {status, stdout, stderr}` | `sh -c` 执行（Windows `cmd /C`）；**非零退出不报错**；stdout/stderr 原样保留（含换行，要干净自己 `.trim()`）；被信号杀死 status 为 -1 |
+| get_env | `sys.get_env(name) → string \| null` | 环境变量；未设置返回 null |
+| args | `sys.args() → array` | 脚本命令行参数：`tyto script.tyto a b` → `["a", "b"]` |
+
+```
+r = sys.shell("ls -la")
+if r.status != 0 {
+    println("出错: " + r.stderr)
+}
+println(r.stdout)
+
+for a in sys.args() {
+    println("参数: " + a)
+}
+```
 
 ---
 
 ## CLI 与 REPL
 
 ```sh
-tyto script.tyto      # 运行脚本（后缀无所谓，解释器不检查）
+tyto script.tyto      # 运行脚本（后缀无所谓，解释器不检查）；额外的参数经 sys.args() 传给脚本
 tyto                  # REPL
 tyto --tokens f       # 调试：打印 token 流（行:列 + 类型）
 tyto --ast f          # 调试：打印 AST

@@ -91,7 +91,7 @@
         },
         "language-constants": {
             "name": "support.constant.tyto",
-            "match": "\\b(EMPTY|inf|nan)\\b"
+            "match": "\\b(EMPTY|inf|nan|fs|sys)\\b"
         },
         "builtin-classes": {
             "name": "support.class.tyto",

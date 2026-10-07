@@ -76,6 +76,8 @@ m.get(k)                       // 缺失返回 null
 
 **栈/队列**（Vec / VecDeque）：Stack `push` `pop` `peek` `len` `is_empty`；Queue `push_back` `pop_front` `front` `back` `len` `is_empty`（空容器取值返回 `EMPTY`）
 
+**命名空间** `fs`（文件）：`read_file` `read_lines` `write_file` `append_file` `exists` `list_dir`；`sys`（系统）：`shell`（返回 `{status, stdout, stderr}`）`get_env` `args`
+
 ## 语义要点
 
 | 规则 | 行为 |

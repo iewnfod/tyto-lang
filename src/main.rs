@@ -65,6 +65,8 @@ fn run_file(path: &str) {
         }
     };
     let mut interp = Interpreter::new();
+    // `tyto script.tyto a b` → sys.args() == ["a", "b"]
+    interp.args = std::env::args().skip(2).collect();
     if let Err(e) = interp.run(&program) {
         eprintln!("{}", e.report(Some(&src)));
         process::exit(1);
