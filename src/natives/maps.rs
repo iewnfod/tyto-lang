@@ -4,7 +4,7 @@ use super::need_args;
 use crate::value::MapKey;
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
-/// Map 方法：get set has remove len keys values isEmpty
+/// Map 方法：get insert contains_key remove len keys values isEmpty
 pub fn call(
     receiver: &Value,
     name: &str,
@@ -20,14 +20,14 @@ pub fn call(
             let v = map.borrow().entries.get(&k).cloned();
             Ok(v.unwrap_or(Value::Null))
         }
-        "set" => {
-            need_args("set", &args, 2, span)?;
+        "insert" => {
+            need_args("insert", &args, 2, span)?;
             let k = map_key(&args[0], span)?;
             map.borrow_mut().entries.insert(k, args[1].clone());
             Ok(receiver.clone()) // 链式
         }
-        "has" => {
-            need_args("has", &args, 1, span)?;
+        "contains_key" => {
+            need_args("contains_key", &args, 1, span)?;
             let k = map_key(&args[0], span)?;
             Ok(Value::Bool(map.borrow().entries.contains_key(&k)))
         }
@@ -42,8 +42,8 @@ pub fn call(
             need_args("len", &args, 0, span)?;
             Ok(Value::Num(map.borrow().entries.len() as f64))
         }
-        "isEmpty" => {
-            need_args("isEmpty", &args, 0, span)?;
+        "is_empty" => {
+            need_args("is_empty", &args, 0, span)?;
             Ok(Value::Bool(map.borrow().entries.is_empty()))
         }
         "keys" => {

@@ -6,6 +6,8 @@
 
 定位：快速写算法和小工具（python/bash 的位置，但写着顺手）。
 
+**完整语言参考**：[docs/language-reference.md](docs/language-reference.md)——全部语法、语义规则与内置库的详细文档。
+
 ## 用法
 
 ```sh
@@ -54,9 +56,9 @@ p.inc = function() { self.n += 1 }   // obj.f() 调用自动绑定 self
 
 // 原生类型：new MaxHeap() / new MinHeap()（可选数组建堆）/ new Map()
 h = new MaxHeap([3, 1])
-h.push(4); h.pop(); h.peek(); h.len(); h.isEmpty()   // 空堆 pop/peek 返回 EMPTY
+h.push(4); h.pop(); h.peek(); h.len(); h.is_empty()   // 空堆 pop/peek 返回 EMPTY
 m = new Map()                  // 键：number/string/bool/null，保序
-m.set(k, v).set(k2, v2)        // set 可链式
+m.insert(k, v).insert(k2, v2)        // set 可链式
 m.get(k)                       // 缺失返回 null
 ```
 
@@ -64,13 +66,13 @@ m.get(k)                       // 缺失返回 null
 
 **全局**：`print`（不换行）/ `println`（换行，多参数空格分隔）、`input()`（一行→string，EOF→null）、`num(s)`、`str(x)`、`len(x)`、`type(x)`、`has(obj, "field")`、`floor` `ceil` `round` `abs` `sqrt` `pow` `min` `max`
 
-**数组**：`push(…)`（返回新长度）`pop()`（空→null）`len` `isEmpty` `contains` `indexOf` `join(sep?)` `sort()` / `sort(f)`（比较器返回数字，负数在前；就地排序返回自身）`reverse` `slice(start, end?)`（负下标）`map(f)` `filter(f)` `reduce(f, init)`
+**数组**：`push(…)`（返回新长度）`pop()`（空→null）`len` `is_empty` `contains` `index_of` `join(sep?)` `sort()` / `sort(f)`（比较器返回数字，负数在前；就地排序返回自身）`reverse` `slice(start, end?)`（负下标）`map(f)` `filter(f)` `fold(init, f)`
 
-**字符串**（按字符索引）：`len` `isEmpty` `split(sep)` `contains` `indexOf` `trim` `startsWith` `endsWith` `toUpper` `toLower` `sub(start, end?)` `replace(old, new)`（替换全部）`chars`
+**字符串**（按字符索引）：`len` `is_empty` `split(sep)` `contains` `index_of` `trim` `starts_with` `ends_with` `to_uppercase` `to_lowercase` `sub(start, end?)` `replace(old, new)`（替换全部）`chars`
 
-**Map**：`get` `set` `has` `remove` `len` `keys` `values` `isEmpty`
+**Map**：`get` `insert` `contains_key` `remove` `len` `keys` `values` `is_empty`
 
-**堆**（`BinaryHeap` 原生实现）：`push` `pop` `peek` `len` `isEmpty`
+**堆**（`BinaryHeap` 原生实现）：`push` `pop` `peek` `len` `is_empty`
 
 ## 语义要点
 

@@ -14,7 +14,7 @@ fn run_file(path: &str) -> String {
 }
 
 /// 用户的 median 伪代码逐字运行（examples/median.tyto 前半部分为原始伪代码，
-/// 仅追加底部驱动）。手工推演：插入 5,1,3,2 → Median=2.5；DeleteMedian→2；再 Median→3。
+/// 仅追加底部驱动）。手工推演：插入 5,1,3,2 → median=2.5；delete_median→2；再 median→3。
 #[test]
 fn median_example_from_user_pseudocode() {
     assert_eq!(run_file("examples/median.tyto"), "2.5\n2\n3\n");
@@ -48,48 +48,48 @@ fn median_stream_sequence() {
 h_low = null
 h_high = null
 
-function Init() { h_low = new MaxHeap()
+function init() { h_low = new MaxHeap()
 h_high = new MinHeap() }
 
-function Balance() {
+function balance() {
     if h_low.len() > h_high.len() + 1 { h_high.push(h_low.pop()) }
     if h_high.len() > h_low.len() { h_low.push(h_high.pop()) }
 }
 
-function Insert(x) {
-    if h_low.isEmpty() || x <= h_low.peek() { h_low.push(x) } else { h_high.push(x) }
-    Balance()
+function insert(x) {
+    if h_low.is_empty() || x <= h_low.peek() { h_low.push(x) } else { h_high.push(x) }
+    balance()
 }
 
-function Median() {
-    if h_low.isEmpty() && h_high.isEmpty() { return EMPTY }
+function median() {
+    if h_low.is_empty() && h_high.is_empty() { return EMPTY }
     if h_low.len() == h_high.len() { return (h_low.peek() + h_high.peek()) / 2 }
     return h_low.peek()
 }
 
-function DeleteMedian() {
-    if h_low.isEmpty() && h_high.isEmpty() { return EMPTY }
+function delete_median() {
+    if h_low.is_empty() && h_high.is_empty() { return EMPTY }
     m = h_low.pop()
-    Balance()
+    balance()
     return m
 }
 
-Init()
-for x in [7, 3, 9, 1, 5, 5, 11] { Insert(x) }
+init()
+for x in [7, 3, 9, 1, 5, 5, 11] { insert(x) }
 // 排序后: 1 3 5 5 7 9 11，中位数 5
-println(Median())
-println(DeleteMedian())
+println(median())
+println(delete_median())
 // 删掉一个 5 后: 1 3 5 7 9 11，中位数 (5+7)/2 = 6
-println(Median())
-println(DeleteMedian())
-println(DeleteMedian())
-println(DeleteMedian())
-println(DeleteMedian())
-println(DeleteMedian())
-println(DeleteMedian())
+println(median())
+println(delete_median())
+println(delete_median())
+println(delete_median())
+println(delete_median())
+println(delete_median())
+println(delete_median())
 // 删空后
-println(Median())
-println(DeleteMedian())
+println(median())
+println(delete_median())
 "#;
     let vec: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
     let out: OutRef = vec.clone();

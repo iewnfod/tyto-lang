@@ -56,8 +56,8 @@ fn str_len_type_has() {
         "number string array object null native function function\n"
     );
     assert_eq!(
-        run("println(has({a: 1}, \"a\"), has({a: 1}, \"b\"), has(new Map(), \"x\"))"),
-        "true false false\n"
+        run("println(has({a: 1}, \"a\"), has({a: 1}, \"b\"))"),
+        "true false\n"
     );
 }
 
@@ -79,10 +79,10 @@ fn array_push_pop_len_isEmpty() {
     let src = "a = [1]\n\
                println(a.push(2, 3))\n\
                println(a)\n\
-               println(a.len(), a.isEmpty())\n\
+               println(a.len(), a.is_empty())\n\
                println(a.pop())\n\
                println(a.pop(), a.pop())\n\
-               println(a.isEmpty())";
+               println(a.is_empty())";
     // pop 空数组返回 null（不是 EMPTY）
     assert_eq!(run(src), "3\n[1, 2, 3]\n3 false\n3\n2 1\ntrue\n");
 }
@@ -91,7 +91,7 @@ fn array_push_pop_len_isEmpty() {
 fn array_contains_indexOf_join() {
     let src = "a = [1, 2, 3]\n\
                println(a.contains(2), a.contains(9))\n\
-               println(a.indexOf(3), a.indexOf(9))\n\
+               println(a.index_of(3), a.index_of(9))\n\
                println(a.join(\"-\"))\n\
                println(a.join())";
     assert_eq!(run(src), "true false\n2 -1\n1-2-3\n1,2,3\n");
@@ -119,7 +119,7 @@ fn array_reverse_slice() {
 }
 
 #[test]
-fn array_map_filter_reduce() {
+fn array_map_filter_fold() {
     assert_eq!(
         run("println([1, 2, 3].map(function(x) { return x * 2 }))"),
         "[2, 4, 6]\n"
@@ -129,7 +129,7 @@ fn array_map_filter_reduce() {
         "[2, 4]\n"
     );
     assert_eq!(
-        run("println([1, 2, 3].reduce(function(acc, x) { return acc + x }, 0))"),
+        run("println([1, 2, 3].fold(0, function(acc, x) { return acc + x }))"),
         "6\n"
     );
     // 结合对象/字符串
@@ -146,17 +146,17 @@ fn string_methods() {
     let src = "s = \"  Hello, World  \"\n\
                println(s.len())\n\
                println(s.trim())\n\
-               println(s.trim().toLower())\n\
-               println(s.trim().toUpper())\n\
-               println(s.contains(\"lo,\") , s.startsWith(\"  H\"), s.endsWith(\"  \"))\n\
+               println(s.trim().to_lowercase())\n\
+               println(s.trim().to_uppercase())\n\
+               println(s.contains(\"lo,\") , s.starts_with(\"  H\"), s.ends_with(\"  \"))\n\
                println(s.trim().sub(0, 5))\n\
                println(s.trim().sub(-5))\n\
                println(\"a-b-c\".split(\"-\"))\n\
                println(\"abc\".split(\"\"))\n\
                println(\"abc\".chars())\n\
-               println(\"hello world\".indexOf(\"world\"))\n\
+               println(\"hello world\".index_of(\"world\"))\n\
                println(\"a-b\".replace(\"-\", \"+\"))\n\
-               println(\"\".isEmpty())";
+               println(\"\".is_empty())";
     assert_eq!(
         run(src),
         "16\nHello, World\nhello, world\nHELLO, WORLD\ntrue true true\nHello\nWorld\n[\"a\", \"b\", \"c\"]\n[\"a\", \"b\", \"c\"]\n[\"a\", \"b\", \"c\"]\n6\na+b\ntrue\n"
@@ -175,17 +175,17 @@ fn string_sub_slice_semantics() {
 #[test]
 fn map_basics() {
     let src = "m = new Map()\n\
-               println(m.isEmpty())\n\
-               m.set(\"a\", 1)\n\
-               m.set(2, \"two\")\n\
-               m.set(true, 3)\n\
+               println(m.is_empty())\n\
+               m.insert(\"a\", 1)\n\
+               m.insert(2, \"two\")\n\
+               m.insert(true, 3)\n\
                println(m.len())\n\
                println(m.get(\"a\"), m.get(2), m.get(true))\n\
                println(m.get(\"missing\"))\n\
-               println(m.has(\"a\"), m.has(\"missing\"))\n\
+               println(m.contains_key(\"a\"), m.contains_key(\"missing\"))\n\
                println(m.keys())\n\
                println(m.values())\n\
-               println(m.remove(2), m.has(2), m.len())\n\
+               println(m.remove(2), m.contains_key(2), m.len())\n\
                println(m)";
     assert_eq!(
         run(src),
@@ -196,17 +196,17 @@ fn map_basics() {
 #[test]
 fn map_key_rules() {
     // 整数键与浮点键同键（1 == 1.0）
-    assert_eq!(run("m = new Map()\nm.set(1, \"a\")\nm.set(1.0, \"b\")\nprintln(m.len(), m.get(1))"), "1 b\n");
+    assert_eq!(run("m = new Map()\nm.insert(1, \"a\")\nm.insert(1.0, \"b\")\nprintln(m.len(), m.get(1))"), "1 b\n");
     // null 可做键
-    assert_eq!(run("m = new Map()\nm.set(null, 0)\nprintln(m.get(null))"), "0\n");
+    assert_eq!(run("m = new Map()\nm.insert(null, 0)\nprintln(m.get(null))"), "0\n");
     // 数组不能做键
-    assert!(matches!(run_err("new Map().set([], 1)"), RtError::Runtime { .. }));
+    assert!(matches!(run_err("new Map().insert([], 1)"), RtError::Runtime { .. }));
 }
 
 #[test]
 fn map_set_is_chainable() {
     assert_eq!(
-        run("m = new Map().set(\"a\", 1).set(\"b\", 2)\nprintln(m.len())"),
+        run("m = new Map().insert(\"a\", 1).insert(\"b\", 2)\nprintln(m.len())"),
         "2\n"
     );
 }
@@ -216,7 +216,7 @@ fn map_set_is_chainable() {
 #[test]
 fn heap_order_and_empty_sentinel() {
     let src = "h = new MaxHeap()\n\
-               println(h.isEmpty())\n\
+               println(h.is_empty())\n\
                println(h.pop())\n\
                println(h.peek())\n\
                h.push(3)\n\
@@ -233,7 +233,7 @@ fn min_heap_sorted_output() {
     let src = "h = new MinHeap()\n\
                for x in [5, 3, 8, 1] { h.push(x) }\n\
                out = []\n\
-               while !h.isEmpty() { out.push(h.pop()) }\n\
+               while !h.is_empty() { out.push(h.pop()) }\n\
                println(out)";
     assert_eq!(run(src), "[1, 3, 5, 8]\n");
 }
@@ -254,7 +254,7 @@ fn heap_median_two_heaps_pattern() {
     let src = "low = new MaxHeap()\n\
                high = new MinHeap()\n\
                function insert(x) {\n\
-               \x20   if low.isEmpty() || x <= low.peek() { low.push(x) } else { high.push(x) }\n\
+               \x20   if low.is_empty() || x <= low.peek() { low.push(x) } else { high.push(x) }\n\
                \x20   if low.len() > high.len() + 1 { high.push(low.pop()) }\n\
                \x20   if high.len() > low.len() { low.push(high.pop()) }\n\
                }\n\

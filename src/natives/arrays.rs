@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use super::{call_user, need_args, need_num, need_str, resolve_slice_index};
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
-/// 数组方法：push pop len isEmpty contains indexOf join sort reverse slice map filter reduce
+/// 数组方法：push pop len is_empty contains index_of join sort reverse slice map filter fold
 pub fn call(
     receiver: &Value,
     name: &str,
@@ -29,8 +29,8 @@ pub fn call(
             need_args("len", &args, 0, span)?;
             Ok(Value::Num(arr.borrow().len() as f64))
         }
-        "isEmpty" => {
-            need_args("isEmpty", &args, 0, span)?;
+        "is_empty" => {
+            need_args("is_empty", &args, 0, span)?;
             Ok(Value::Bool(arr.borrow().is_empty()))
         }
         "contains" => {
@@ -38,8 +38,8 @@ pub fn call(
             let hit = arr.borrow().iter().any(|v| v == &args[0]);
             Ok(Value::Bool(hit))
         }
-        "indexOf" => {
-            need_args("indexOf", &args, 1, span)?;
+        "index_of" => {
+            need_args("index_of", &args, 1, span)?;
             let a = arr.borrow();
             let idx = a.iter().position(|v| v == &args[0]).map(|i| i as f64).unwrap_or(-1.0);
             Ok(Value::Num(idx))
@@ -78,13 +78,13 @@ pub fn call(
             }
             Ok(Value::Array(Rc::new(RefCell::new(out))))
         }
-        "reduce" => {
-            // reduce(f, init)：args[0] 是回调，args[1] 是初值
-            need_args("reduce", &args, 2, span)?;
+        "fold" => {
+            // fold(init, f)：init 在前（Rust 参数顺序）
+            need_args("fold", &args, 2, span)?;
             let snapshot = arr.borrow().clone();
-            let mut acc = args[1].clone();
+            let mut acc = args[0].clone();
             for item in snapshot {
-                acc = call_user(interp, &args[0], vec![acc, item], span)?;
+                acc = call_user(interp, &args[1], vec![acc, item], span)?;
             }
             Ok(acc)
         }

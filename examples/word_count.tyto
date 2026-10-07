@@ -2,10 +2,10 @@
 text = "the quick the lazy the dog quick quick"
 counts = new Map()
 for word in text.split(" ") {
-    if counts.has(word) {
-        counts.set(word, counts.get(word) + 1)
+    if counts.contains_key(word) {
+        counts.insert(word, counts.get(word) + 1)
     } else {
-        counts.set(word, 1)
+        counts.insert(word, 1)
     }
 }
 

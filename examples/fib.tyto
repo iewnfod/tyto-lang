@@ -3,9 +3,9 @@ memo = new Map()
 
 function fib(n) {
     if n < 2 { return n }
-    if memo.has(n) { return memo.get(n) }
+    if memo.contains_key(n) { return memo.get(n) }
     r = fib(n - 1) + fib(n - 2)
-    memo.set(n, r)
+    memo.insert(n, r)
     return r
 }
 

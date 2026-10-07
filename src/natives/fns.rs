@@ -1,5 +1,4 @@
 use super::{need_args, need_num};
-use crate::value::MapKey;
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
 /// 全局函数：input / num / str / len / type / has / floor / ceil / round / abs / sqrt / pow / min / max
@@ -79,18 +78,9 @@ pub fn call_global(
                 (Value::Obj(o), Value::Str(field)) => {
                     Ok(Value::Bool(o.borrow().fields.contains_key(field)))
                 }
-                (Value::Map(m), key) => {
-                    let k = MapKey::from_value(key).ok_or_else(|| {
-                        RtError::runtime(
-                            Some(span),
-                            format!("has(): invalid map key type {}", key.type_name()),
-                        )
-                    })?;
-                    Ok(Value::Bool(m.borrow().entries.contains_key(&k)))
-                }
                 (other, _) => Err(RtError::runtime(
                     Some(span),
-                    format!("has(): expects an object or map, got {}", other.type_name()),
+                    format!("has(): expects an object, got {}", other.type_name()),
                 )),
             }
         }

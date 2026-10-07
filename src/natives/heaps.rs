@@ -4,7 +4,7 @@ use super::{need_args, need_num};
 use crate::value::HeapVal;
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
-/// 堆方法：push pop peek len isEmpty。
+/// 堆方法：push pop peek len is_empty。
 /// 空堆 pop/peek 返回 EMPTY（哨兵）。
 pub fn call(
     receiver: &Value,
@@ -54,12 +54,12 @@ pub fn call(
             need_args("len", &args, 0, span)?;
             Ok(Value::Num(h.borrow().len() as f64))
         }
-        (Value::MaxHeap(h), "isEmpty") => {
-            need_args("isEmpty", &args, 0, span)?;
+        (Value::MaxHeap(h), "is_empty") => {
+            need_args("is_empty", &args, 0, span)?;
             Ok(Value::Bool(h.borrow().is_empty()))
         }
-        (Value::MinHeap(h), "isEmpty") => {
-            need_args("isEmpty", &args, 0, span)?;
+        (Value::MinHeap(h), "is_empty") => {
+            need_args("is_empty", &args, 0, span)?;
             Ok(Value::Bool(h.borrow().is_empty()))
         }
         (other, _) => Err(RtError::runtime(

@@ -1,7 +1,7 @@
 use super::{need_args, need_str, resolve_slice_index};
 use crate::{Interpreter, RtError, RtResult, Span, Value};
 
-/// 字符串方法：len split contains trim startsWith endsWith toUpper toLower sub replace chars indexOf isEmpty
+/// 字符串方法：len split contains trim starts_with ends_with to_uppercase to_lowercase sub replace chars index_of is_empty
 pub fn call(
     receiver: &Value,
     name: &str,
@@ -15,8 +15,8 @@ pub fn call(
             need_args("len", &args, 0, span)?;
             Ok(Value::Num(s.chars().count() as f64))
         }
-        "isEmpty" => {
-            need_args("isEmpty", &args, 0, span)?;
+        "is_empty" => {
+            need_args("is_empty", &args, 0, span)?;
             Ok(Value::Bool(s.is_empty()))
         }
         "split" => {
@@ -34,9 +34,9 @@ pub fn call(
             let sub = need_str("contains", &args[0], span)?;
             Ok(Value::Bool(s.contains(&sub)))
         }
-        "indexOf" => {
-            need_args("indexOf", &args, 1, span)?;
-            let sub = need_str("indexOf", &args[0], span)?;
+        "index_of" => {
+            need_args("index_of", &args, 1, span)?;
+            let sub = need_str("index_of", &args[0], span)?;
             let idx = s.find(&sub).map(|byte| s[..byte].chars().count()).map(|i| i as f64).unwrap_or(-1.0);
             Ok(Value::Num(idx))
         }
@@ -44,22 +44,22 @@ pub fn call(
             need_args("trim", &args, 0, span)?;
             Ok(Value::Str(s.trim().to_string()))
         }
-        "startsWith" => {
-            need_args("startsWith", &args, 1, span)?;
-            let sub = need_str("startsWith", &args[0], span)?;
+        "starts_with" => {
+            need_args("starts_with", &args, 1, span)?;
+            let sub = need_str("starts_with", &args[0], span)?;
             Ok(Value::Bool(s.starts_with(&sub)))
         }
-        "endsWith" => {
-            need_args("endsWith", &args, 1, span)?;
-            let sub = need_str("endsWith", &args[0], span)?;
+        "ends_with" => {
+            need_args("ends_with", &args, 1, span)?;
+            let sub = need_str("ends_with", &args[0], span)?;
             Ok(Value::Bool(s.ends_with(&sub)))
         }
-        "toUpper" => {
-            need_args("toUpper", &args, 0, span)?;
+        "to_uppercase" => {
+            need_args("to_uppercase", &args, 0, span)?;
             Ok(Value::Str(s.to_uppercase()))
         }
-        "toLower" => {
-            need_args("toLower", &args, 0, span)?;
+        "to_lowercase" => {
+            need_args("to_lowercase", &args, 0, span)?;
             Ok(Value::Str(s.to_lowercase()))
         }
         "sub" => {
