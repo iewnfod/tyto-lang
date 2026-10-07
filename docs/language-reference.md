@@ -69,7 +69,7 @@ true  false  null  new
 | 对象 | `{x: 1, y: 2}` | 允许尾逗号；键可为标识符或字符串 |
 | 布尔/空 | `true` `false` `null` | |
 
-区间 `a..b`（不含 b）与 `a..=b`（含 b）**只能**出现在 for-in 头部，不是独立的值。
+区间 `a..b`（不含 b）与 `a..=b`（含 b）**只能**出现在 for-in 头部与切片方括号内（见[切片](#切片)），不是独立的值。
 
 ---
 
@@ -129,7 +129,7 @@ null   EMPTY   false   0   nan   ""
 | 7 | `+  -` | |
 | 8 | `*  /  %` | |
 | 9 | `!x` `-x` | 一元，可叠：`- -x` |
-| 10 | `f(...)` `a[i]` `a.b` `a?.b` | 后缀，从左到右链 |
+| 10 | `f(...)` `a[i]` `a[i..j]` `a.b` `a?.b` | 后缀，从左到右链 |
 
 ### `+` 的三重身份
 
@@ -176,10 +176,39 @@ h ??= new MaxHeap()   // h 已存在 → 右侧不求值，保持原堆
 
 ### 索引
 
-- `a[i]`：i 必须是**非负整数** number；数组越界（读/写）都报错，不支持负索引（负索引请用 `slice`/`sub`）
+- `a[i]`：i 必须是**非负整数** number；数组越界（读/写）都报错，不支持负索引（负索引请用切片或 `slice`/`sub`）
 - `s[i]`：返回单字符字符串（按字符，不是字节），越界报错
 - 字符串不可变：`s[0] = "x"` 报错
 - Map 不支持 `m[k]` 读写，请用 `get`/`insert` 方法
+
+### 切片
+
+`a[start..end]` 截取数组或字符串的一段，生成**新值**（数组是新数组，与原数组引用隔离）。端点可省略，`..` 不含 end，`..=` 含 end：
+
+```
+a = [1, 2, 3, 4]
+a[1..3]      // [2, 3]     （不含下标 3）
+a[1..=3]     // [2, 3, 4]  （含下标 3）
+a[..2]       // [1, 2]     （省略起点 = 从 0 起）
+a[2..]       // [3, 4]     （省略终点 = 到末尾止）
+a[..]        // [1, 2, 3, 4]（全量拷贝）
+
+s = "Hello"
+s[1..3]      // "el"
+s[..2]       // "He"
+s[2..]       // "llo"
+```
+
+语义与 `slice()`/`sub()` 方法完全一致：
+
+- **负下标从末尾数**：`a[-2..]` → `[3, 4]`，`s[..-1]` → `"Hell"`
+- **越界截断**：`a[1..100]` → `[2, 3, 4]`，不报错
+- **小数截断**：`a[0.9..2.7]` → `a[0..2]`
+- 起点 ≥ 终点得**空值**（`a[2..1]` → `[]`），不报错
+- 字符串按**字符**（Unicode 码点）切片：`"héllo"[1..3]` → `"él"`
+- 端点可以是任意表达式：`a[n + 1..m]`；切片可继续链式：`a[1..][0]`、`s[..2].len()`
+
+切片是表达式，**不能作为赋值目标**（`a[1..2] = x` 报错）；对非数组/字符串切片（如 number、map）报运行时错误。
 
 ---
 
@@ -353,7 +382,7 @@ p = {
 | sort | `sort() → array` | 就地排序并返回自身（可链式）。无比较器时要求**全 number 或全 string**，否则报错 |
 | sort | `sort(f) → array` | 比较器 `f(a, b) → number`，负数表示 a 在前；**稳定排序**；比较器内抛错会中断 |
 | reverse | `reverse() → array` | 就地反转，返回自身 |
-| slice | `slice(start, end?) → array` | 新数组；**负下标从末尾数**，越界截断，小数截断（JS slice 语义） |
+| slice | `slice(start, end?) → array` | 新数组；**负下标从末尾数**，越界截断，小数截断（JS slice 语义）；等价于 `a[start..end]` 切片语法 |
 | map | `map(f) → array` | `f(elem)`，返回新数组 |
 | filter | `filter(f) → array` | `f(elem)` 真值保留 |
 | fold | `fold(init, f) → value` | `f(acc, elem)` 依次折叠；init 在前（Rust 参数顺序） |
@@ -364,10 +393,11 @@ a.sort()                                        // [1, 2, 3]
 a.sort(function(x, y) { return y - x })         // [3, 2, 1] 降序
 [1, 2, 3, 4].slice(1, 3)                        // [2, 3]
 [1, 2, 3, 4].slice(-2)                          // [3, 4]
+[1, 2, 3, 4][1..3]                              // [2, 3]（切片语法）
 [1, 2, 3].fold(0, function(s, x) { return s + x })   // 6
 ```
 
-越界（读和写）报错；索引必须非负整数。
+越界（读和写）报错；索引必须非负整数（截取一段请用切片语法）。
 
 ---
 
@@ -387,19 +417,20 @@ a.sort(function(x, y) { return y - x })         // [3, 2, 1] 降序
 | ends_with | `ends_with(s) → bool` | |
 | to_uppercase | `to_uppercase() → string` | |
 | to_lowercase | `to_lowercase() → string` | |
-| sub | `sub(start, end?) → string` | 子串；**负下标从末尾数**、越界截断（同 slice 语义） |
+| sub | `sub(start, end?) → string` | 子串；**负下标从末尾数**、越界截断（同 slice 语义）；等价于 `s[start..end]` 切片语法 |
 | replace | `replace(old, new) → string` | 替换**全部**出现 |
 | chars | `chars() → array` | 拆成单字符数组 |
 
 ```
 "  Hello, World  ".trim().sub(0, 5)     // "Hello"
+"  Hello, World  ".trim()[..5]          // "Hello"（切片语法）
 "hello world".index_of("world")          // 6
 "a-b-c".split("-")                      // ["a", "b", "c"]
 "abc".split("")                         // ["a", "b", "c"]
 "na-x na-y".replace("na-", "")          // "x y"
 ```
 
-`s[i]` 返回单字符字符串，越界报错。
+`s[i]` 返回单字符字符串，越界报错；截取子串请用切片语法 `s[start..end]`。
 
 ---
 

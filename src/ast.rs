@@ -82,6 +82,14 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// 切片 `a[start..end]`（端点可省略，`..=` 含 end）；仅数组/字符串
+    Slice {
+        target: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        inclusive: bool,
+        span: Span,
+    },
     Member {
         target: Box<Expr>,
         name: String,
@@ -127,6 +135,7 @@ impl Expr {
             | Expr::Logic { span, .. }
             | Expr::Ternary { span, .. }
             | Expr::Index { span, .. }
+            | Expr::Slice { span, .. }
             | Expr::Member { span, .. }
             | Expr::OptionalMember { span, .. }
             | Expr::Call { span, .. }

@@ -3,6 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::ast::{BinaryOp, Expr, LogicOp, UnaryOp};
+use crate::natives::resolve_slice_index;
 use crate::scope;
 use crate::value::{eq_value, FuncObj};
 use crate::{Interpreter, RtError, RtResult, Span, Value};
@@ -79,6 +80,18 @@ impl Interpreter {
                 let t = self.evaluate(target)?;
                 let i = self.evaluate(index)?;
                 self.index_read(&t, &i, *span)
+            }
+            Expr::Slice { target, start, end, inclusive, span } => {
+                let t = self.evaluate(target)?;
+                let s = match start {
+                    Some(e) => Some(self.evaluate(e)?),
+                    None => None,
+                };
+                let e = match end {
+                    Some(e) => Some(self.evaluate(e)?),
+                    None => None,
+                };
+                self.slice_read(&t, s.as_ref(), e.as_ref(), *inclusive, *span)
             }
             Expr::Member { target, name, span } => {
                 let recv = self.evaluate(target)?;
@@ -237,6 +250,50 @@ impl Interpreter {
         }
     }
 
+    /// 切片读取：`a[start..end]` / `a[start..=end]`（端点可省略）。
+    /// 与 `slice()`/`sub()` 同语义：负下标从末尾数，越界截断，小数截断。
+    pub(crate) fn slice_read(
+        &self,
+        container: &Value,
+        start: Option<&Value>,
+        end: Option<&Value>,
+        inclusive: bool,
+        span: Span,
+    ) -> RtResult<Value> {
+        let bounds = |len: usize| -> RtResult<(usize, usize)> {
+            let s = match start {
+                Some(v) => resolve_slice_index(slice_bound(v, span)?, len),
+                None => 0,
+            };
+            let e = match end {
+                Some(v) => {
+                    let raw = resolve_slice_index(slice_bound(v, span)?, len);
+                    if inclusive { (raw + 1).min(len) } else { raw }
+                }
+                None => len,
+            };
+            Ok((s, e))
+        };
+        match container {
+            Value::Array(arr) => {
+                let a = arr.borrow();
+                let (s, e) = bounds(a.len())?;
+                let items = if s >= e { vec![] } else { a[s..e].to_vec() };
+                Ok(Value::Array(Rc::new(RefCell::new(items))))
+            }
+            Value::Str(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                let (s, e) = bounds(chars.len())?;
+                let out: String = if s >= e { String::new() } else { chars[s..e].iter().collect() };
+                Ok(Value::Str(out))
+            }
+            other => Err(RtError::runtime(
+                Some(span),
+                format!("cannot slice {}", other.type_name()),
+            )),
+        }
+    }
+
     /// 成员读取（非调用）：只有对象有字段；原生类型的方法必须以调用形式出现
     pub(crate) fn get_member(&self, recv: &Value, name: &str, span: Span) -> RtResult<Value> {
         match recv {
@@ -266,6 +323,17 @@ pub(crate) fn index_int(index: &Value, span: Span) -> RtResult<usize> {
         other => Err(RtError::runtime(
             Some(span),
             format!("index must be a non-negative integer, got {}", fmt_index(other)),
+        )),
+    }
+}
+
+/// 切片端点必须是 number（负数/小数/越界由 resolve_slice_index 归一化）
+fn slice_bound(v: &Value, span: Span) -> RtResult<f64> {
+    match v {
+        Value::Num(n) => Ok(*n),
+        other => Err(RtError::runtime(
+            Some(span),
+            format!("slice bounds must be numbers, got {}", other.type_name()),
         )),
     }
 }

@@ -408,10 +408,46 @@ impl Parser {
                 }
                 Some(TokenKind::LBracket) => {
                     self.advance();
-                    let index = self.parse_expr()?;
-                    self.expect(TokenKind::RBracket, "expected ']' after index")?;
+                    // 切片语法：[..e] [s..] [s..e]（含 ..= 变体，端点均可省略）
+                    let slice = if matches!(self.peek_kind(), Some(TokenKind::DotDot | TokenKind::DotDotEq)) {
+                        // 无起点：[..e] 或 [..]
+                        let inclusive = matches!(self.advance().kind, TokenKind::DotDotEq);
+                        let end = if self.check(&TokenKind::RBracket) {
+                            None
+                        } else {
+                            Some(self.parse_expr()?)
+                        };
+                        (None, end, inclusive)
+                    } else {
+                        let first = self.parse_expr()?;
+                        match self.peek_kind() {
+                            Some(TokenKind::DotDot) | Some(TokenKind::DotDotEq) => {
+                                // 有起点：[s..e] / [s..=e] / [s..]
+                                let inclusive = matches!(self.advance().kind, TokenKind::DotDotEq);
+                                let end = if self.check(&TokenKind::RBracket) {
+                                    None
+                                } else {
+                                    Some(self.parse_expr()?)
+                                };
+                                (Some(first), end, inclusive)
+                            }
+                            _ => {
+                                self.expect(TokenKind::RBracket, "expected ']' after index")?;
+                                let span = expr.span();
+                                expr = Expr::Index { target: Box::new(expr), index: Box::new(first), span };
+                                continue;
+                            }
+                        }
+                    };
+                    self.expect(TokenKind::RBracket, "expected ']' after slice")?;
                     let span = expr.span();
-                    expr = Expr::Index { target: Box::new(expr), index: Box::new(index), span };
+                    expr = Expr::Slice {
+                        target: Box::new(expr),
+                        start: slice.0.map(Box::new),
+                        end: slice.1.map(Box::new),
+                        inclusive: slice.2,
+                        span,
+                    };
                 }
                 Some(TokenKind::Dot) => {
                     self.advance();
@@ -784,6 +820,13 @@ mod tests {
                 index: Box::new(no_span_expr(*index)),
                 span: d,
             },
+            Expr::Slice { target, start, end, inclusive, .. } => Expr::Slice {
+                target: Box::new(no_span_expr(*target)),
+                start: start.map(|e| Box::new(no_span_expr(*e))),
+                end: end.map(|e| Box::new(no_span_expr(*e))),
+                inclusive,
+                span: d,
+            },
             Expr::Member { target, name, .. } => {
                 Expr::Member { target: Box::new(no_span_expr(*target)), name, span: d }
             }
@@ -986,6 +1029,58 @@ mod tests {
         ));
         let e2 = expr("f(1)(2)");
         assert!(matches!(e2, Expr::Call { .. }));
+    }
+
+    #[test]
+    fn slice_syntax_forms() {
+        // a[1..3]：双端
+        let e = expr("a[1..3]");
+        match e {
+            Expr::Slice { target, start, end, inclusive, .. } => {
+                assert!(matches!(*target, Expr::Ident(ref s, _) if s == "a"));
+                assert!(matches!(*start.unwrap(), Expr::Num(1.0, _)));
+                assert!(matches!(*end.unwrap(), Expr::Num(3.0, _)));
+                assert!(!inclusive);
+            }
+            other => panic!("expected Slice, got {:?}", other),
+        }
+        // a[..3]：省略起点
+        let e = expr("a[..3]");
+        match e {
+            Expr::Slice { start, end, .. } => {
+                assert!(start.is_none());
+                assert!(matches!(*end.unwrap(), Expr::Num(3.0, _)));
+            }
+            other => panic!("expected Slice, got {:?}", other),
+        }
+        // a[1..]：省略终点
+        let e = expr("a[1..]");
+        match e {
+            Expr::Slice { start, end, .. } => {
+                assert!(matches!(*start.unwrap(), Expr::Num(1.0, _)));
+                assert!(end.is_none());
+            }
+            other => panic!("expected Slice, got {:?}", other),
+        }
+        // a[..]：两端都省略（全量拷贝）
+        assert!(matches!(expr("a[..]"), Expr::Slice { start: None, end: None, .. }));
+        // a[1..=3]：含终点
+        assert!(matches!(expr("a[1..=3]"), Expr::Slice { inclusive: true, .. }));
+        assert!(matches!(expr("a[..=3]"), Expr::Slice { inclusive: true, start: None, .. }));
+        // 表达式端点
+        assert!(matches!(expr("a[n + 1..m]"), Expr::Slice { .. }));
+        assert!(matches!(expr("a[x..-2]"), Expr::Slice { .. }));
+        // 切片可继续链式后缀
+        assert!(matches!(expr("a[1..][0]"), Expr::Index { .. }));
+        assert!(matches!(expr("s[..2].len()"), Expr::Call { .. }));
+        // 普通索引不受影响
+        assert!(matches!(expr("a[0]"), Expr::Index { .. }));
+    }
+
+    #[test]
+    fn slice_not_assignable() {
+        assert!(program_fails("a[1..2] = [1, 2]"));
+        assert!(program_fails("s[..1] += \"x\""));
     }
 
     #[test]
