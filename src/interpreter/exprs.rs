@@ -58,6 +58,8 @@ impl Interpreter {
                 let take_left = match op {
                     LogicOp::Or => l.truthy(),
                     LogicOp::And => !l.truthy(),
+                    // 仅 null 触发回退：非 null 一律取左（EMPTY/0/"" 不回退）
+                    LogicOp::Nullish => !matches!(l, Value::Null),
                 };
                 if take_left {
                     Ok(l)

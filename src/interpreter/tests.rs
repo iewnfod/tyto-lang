@@ -347,6 +347,40 @@ fn optional_chaining() {
 }
 
 #[test]
+fn nullish_coalescing() {
+    // 仅 null 触发回退
+    assert_eq!(run("println(null ?? 1)"), "1\n");
+    assert_eq!(run("println(null ?? null ?? 3)"), "3\n");
+    // 假值不触发（这是与 || 的核心区别）
+    assert_eq!(run("println(0 ?? 1)"), "0\n");
+    assert_eq!(run("println(\"\" ?? \"x\")"), "\n");
+    assert_eq!(run("println(false ?? true)"), "false\n");
+    // EMPTY 是容器哨兵，不参与 nullish
+    assert_eq!(run("println(EMPTY ?? 1)"), "EMPTY\n");
+    // 对比 ||
+    assert_eq!(run("println(0 ?? \"x\")\nprintln(0 || \"x\")"), "0\nx\n");
+    // 短路：非 null 时右侧不求值
+    assert_eq!(run("println(9 ?? undefined_var)"), "9\n");
+    assert!(matches!(run_err("println(null ?? undefined_var)"), RtError::Runtime { .. }));
+    // 与可选链配合
+    assert_eq!(run("p = null\nprintln(p?.x ?? 0)"), "0\n");
+}
+
+#[test]
+fn nullish_assign() {
+    assert_eq!(run("x = null\nx ??= 5\nprintln(x)"), "5\n");
+    assert_eq!(run("x = 3\nx ??= 5\nprintln(x)"), "3\n");
+    // 旧值非 null：右侧不求值
+    assert_eq!(run("x = 3\nx ??= undefined_var\nprintln(x)"), "3\n");
+    // 假值不触发
+    assert_eq!(run("x = 0\nx ??= 9\nprintln(x)"), "0\n");
+    // 索引 / 成员目标
+    assert_eq!(run("a = [null, 2]\na[0] ??= 7\nprintln(a)"), "[7, 2]\n");
+    assert_eq!(run("p = {x: null}\np.x ??= 2\nprintln(p)"), "{x: 2}\n");
+    assert_eq!(run("p = {x: 1}\np.x ??= 2\nprintln(p)"), "{x: 1}\n");
+}
+
+#[test]
 fn object_equality_by_reference() {
     let src = "a = {x: 1}\n\
                b = a\n\

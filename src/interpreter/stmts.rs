@@ -155,6 +155,13 @@ impl Interpreter {
         if op == AssignOp::Set {
             return self.evaluate(value);
         }
+        // `??=`：旧值为 null 才求值并采用右侧；否则保持原值（右侧不求值）
+        if op == AssignOp::Nullish {
+            return match old {
+                Some(v) if !matches!(v, Value::Null) => Ok(v),
+                _ => self.evaluate(value),
+            };
+        }
         let old = old.unwrap_or_else(|| {
             // 复合赋值的目标不存在：视为运行时错误，由上层 span 报告
             Value::Null
@@ -166,7 +173,7 @@ impl Interpreter {
             AssignOp::Mul => BinaryOp::Mul,
             AssignOp::Div => BinaryOp::Div,
             AssignOp::Mod => BinaryOp::Mod,
-            AssignOp::Set => unreachable!(),
+            AssignOp::Set | AssignOp::Nullish => unreachable!(),
         };
         self.binary_op(old, binop, rhs, span)
     }

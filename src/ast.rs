@@ -27,6 +27,8 @@ pub enum BinaryOp {
 pub enum LogicOp {
     And,
     Or,
+    /// `??`：仅 null 触发回退
+    Nullish,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +39,8 @@ pub enum AssignOp {
     Mul,
     Div,
     Mod,
+    /// `??=`：旧值为 null 才赋值
+    Nullish,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +63,7 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
-    /// `&&` / `||`（短路，返回操作数）
+    /// `&&` / `||` / `??`（短路，返回操作数）
     Logic {
         left: Box<Expr>,
         op: LogicOp,

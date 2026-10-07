@@ -12,7 +12,9 @@ fn operator_table() -> &'static [(&'static str, TokenKind)] {
     use TokenKind::*;
     &[
         ("..=", DotDotEq),
+        ("??=", QuestionQuestionAssign),
         ("?.", QuestionDot),
+        ("??", QuestionQuestion),
         ("<=", Lte),
         (">=", Gte),
         ("==", Eq),
@@ -486,6 +488,26 @@ mod tests {
     fn optional_chaining_token() {
         let ks = kinds("p?.x").unwrap();
         assert_eq!(ks[..3], [Ident("p".into()), QuestionDot, Ident("x".into())]);
+    }
+
+    #[test]
+    fn nullish_coalescing_tokens() {
+        let ks = kinds("a ?? b").unwrap();
+        assert_eq!(ks[..3], [Ident("a".into()), QuestionQuestion, Ident("b".into())]);
+
+        // ??= 优先于 ?? 匹配（最长匹配）
+        let ks = kinds("x ??= 1").unwrap();
+        assert_eq!(ks[..3], [Ident("x".into()), QuestionQuestionAssign, Num(1.0)]);
+
+        // 与 ?. / 三元互不干扰
+        let ks = kinds("p?.x ?? q ??= r").unwrap();
+        assert_eq!(ks[1], QuestionDot);
+        assert_eq!(ks[3], QuestionQuestion);
+        assert_eq!(ks[5], QuestionQuestionAssign);
+
+        // 运算符后的换行被抑制（可跨行书写）
+        let ks = kinds("a ??\nb").unwrap();
+        assert!(!ks.contains(&Eol));
     }
 
     #[test]

@@ -41,6 +41,8 @@ pub enum TokenKind {
     DotDotEq,
     Question,
     QuestionDot,
+    QuestionQuestion,
+    QuestionQuestionAssign,
     Colon,
     Comma,
     Semi,

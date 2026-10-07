@@ -79,6 +79,7 @@ impl Parser {
             Some(TokenKind::MulAssign) => AssignOp::Mul,
             Some(TokenKind::DivAssign) => AssignOp::Div,
             Some(TokenKind::ModAssign) => AssignOp::Mod,
+            Some(TokenKind::QuestionQuestionAssign) => AssignOp::Nullish,
             _ => return Ok(Stmt::Expr(expr, span)),
         };
         self.advance();
@@ -264,7 +265,7 @@ impl Parser {
     }
 
     fn parse_ternary(&mut self) -> RtResult<Expr> {
-        let cond = self.parse_logic_or()?;
+        let cond = self.parse_nullish()?;
         if self.check(&TokenKind::Question) {
             self.advance();
             let then_expr = self.parse_expr()?;
@@ -279,6 +280,18 @@ impl Parser {
             });
         }
         Ok(cond)
+    }
+
+    /// `??`：优先级介于三元与 `||` 之间（JS 同位），左结合
+    fn parse_nullish(&mut self) -> RtResult<Expr> {
+        let mut left = self.parse_logic_or()?;
+        while self.check(&TokenKind::QuestionQuestion) {
+            self.advance();
+            let right = self.parse_logic_or()?;
+            let span = left.span();
+            left = Expr::Logic { left: Box::new(left), op: LogicOp::Nullish, right: Box::new(right), span };
+        }
+        Ok(left)
     }
 
     fn parse_logic_or(&mut self) -> RtResult<Expr> {
@@ -710,6 +723,8 @@ fn token_text(kind: &TokenKind) -> &'static str {
         DotDotEq => "..=",
         Question => "?",
         QuestionDot => "?.",
+        QuestionQuestion => "??",
+        QuestionQuestionAssign => "??=",
         Colon => ":",
         Comma => ",",
         Semi => ";",
@@ -915,6 +930,28 @@ mod tests {
     }
 
     #[test]
+    fn nullish_precedence_and_assoc() {
+        // a ?? b || c → a ?? (b || c)：?? 低于 ||
+        let e = expr("a ?? b || c");
+        match e {
+            Expr::Logic { op: LogicOp::Nullish, right, .. } => {
+                assert!(matches!(*right, Expr::Logic { op: LogicOp::Or, .. }));
+            }
+            other => panic!("expected Logic(Nullish), got {:?}", other),
+        }
+        // a ?? b ?? c → (a ?? b) ?? c：左结合
+        let e = expr("a ?? b ?? c");
+        match e {
+            Expr::Logic { op: LogicOp::Nullish, left, .. } => {
+                assert!(matches!(*left, Expr::Logic { op: LogicOp::Nullish, .. }));
+            }
+            other => panic!("expected nested Logic(Nullish), got {:?}", other),
+        }
+        // ?? 高于三元：a ?? b ? c : d → (a ?? b) ? c : d
+        assert!(matches!(expr("a ?? b ? c : d"), Expr::Ternary { .. }));
+    }
+
+    #[test]
     fn unary_chain() {
         let e = expr("-x");
         assert!(matches!(
@@ -1074,6 +1111,17 @@ mod tests {
             if matches!(&stmts[0], Stmt::Assign { op: AssignOp::Sub, target: Expr::Member { .. }, .. })));
         // 可选链不能作为赋值目标
         assert!(program_fails("p?.x = 1"));
+    }
+
+    #[test]
+    fn nullish_assign_parses() {
+        assert!(matches!(&program("x ??= 1"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { op: AssignOp::Nullish, .. })));
+        // 索引 / 成员目标
+        assert!(matches!(&program("a[0] ??= 1"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { op: AssignOp::Nullish, target: Expr::Index { .. }, .. })));
+        assert!(matches!(&program("p.x ??= 1"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { op: AssignOp::Nullish, target: Expr::Member { .. }, .. })));
     }
 
     #[test]
