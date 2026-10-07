@@ -11,11 +11,12 @@
 ## 用法
 
 ```sh
-cargo install --path .   # 安装 tyto 命令
-tyto script.tyto         # 运行脚本（后缀 .tyto，避免与 .rt/.rtl 等老格式冲突）
-tyto                     # REPL（Ctrl-D 退出）
-tyto --tokens script.tyto  # 调试：token 流
-tyto --ast script.tyto     # 调试：AST
+cargo install --path .     # 安装 tyto 命令
+tyto script.tyto           # 运行脚本（后缀 .tyto，避免与 .rt/.rtl 等老格式冲突）
+tyto                       # REPL（Ctrl-D 退出）
+tyto --tokens script.tyto  # 调试：token 流（短参 -t）
+tyto --ast script.tyto     # 调试：AST（短参 -a）
+tyto --help                # 完整 CLI 说明
 ```
 
 ## 语法速查

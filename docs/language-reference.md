@@ -554,9 +554,11 @@ for a in sys.args() {
 ```sh
 tyto script.tyto      # 运行脚本（后缀无所谓，解释器不检查）；额外的参数经 sys.args() 传给脚本
 tyto                  # REPL
-tyto --tokens f       # 调试：打印 token 流（行:列 + 类型）
-tyto --ast f          # 调试：打印 AST
+tyto --tokens f       # 调试：打印 token 流（行:列 + 类型），短参 -t
+tyto --ast f          # 调试：打印 AST，短参 -a
 ```
+
+选项可放在任意位置；以 `-` 开头的脚本参数需用 `--` 分隔（`tyto s.tyto -- -t` 中的 `-t` 会传给脚本而不是当成选项）。未知选项与缺文件的调试开关以退出码 2 结束。
 
 REPL：全局作用域跨输入保持；未闭合的 `{`/`(`/字符串自动续行（提示符变 `..`）；**裸表达式回显求值结果**（字符串带引号显示）；Ctrl-D 退出。
 

@@ -8,7 +8,7 @@ pub fn run() {
     let stdin = io::stdin();
     let mut buffer = String::new();
 
-    println!("tyto v{} REPL — Ctrl-D 退出", env!("CARGO_PKG_VERSION"));
+    println!("tyto v{} REPL — Ctrl-D to exit", env!("CARGO_PKG_VERSION"));
     loop {
         print!("{}", if needs_more(&buffer) { ".. " } else { ">> " });
         io::stdout().flush().ok();

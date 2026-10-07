@@ -39,7 +39,7 @@ pub fn call(name: &str, interp: &mut Interpreter, args: Vec<Value>, span: Span) 
                 Err(env::VarError::NotPresent) => Ok(Value::Null),
                 Err(env::VarError::NotUnicode(v)) => Err(RtError::runtime(
                     Some(span),
-                    format!("sys.get_env({:?}): 环境变量不是合法 UTF-8: {:?}", name, v),
+                    format!("sys.get_env({:?}): environment variable is not valid UTF-8: {:?}", name, v),
                 )),
             }
         }

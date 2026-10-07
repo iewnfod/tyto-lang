@@ -201,7 +201,7 @@ impl Lexer {
                 None | Some('\n') => {
                     return Err(RtError::lex(
                         self.span(),
-                        "unterminated string literal (换行需转义为 \\n)",
+                        "unterminated string literal (escape newlines as \\n)",
                     ))
                 }
                 Some(c) if c == quote => {
