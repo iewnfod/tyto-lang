@@ -1,0 +1,62 @@
+{
+    "name": "tyto-lang",
+    "displayName": "Tyto",
+    "description": "tyto-lang 语法高亮、补全、悬停文档与运行命令",
+    "version": "0.0.1",
+    "publisher": "iewnfod",
+    "license": "MPL-2.0",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Snippets"
+    ],
+    "activationEvents": [
+        "onLanguage:tyto"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "tyto",
+                "aliases": [
+                    "tyto-lang",
+                    "tyto"
+                ],
+                "extensions": [
+                    ".tyto"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "tyto",
+                "scopeName": "source.tyto",
+                "path": "./syntaxes/tyto.tmLanguage.json"
+            }
+        ],
+        "snippets": [
+            {
+                "language": "tyto",
+                "path": "./snippets/tyto.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "tyto.runFile",
+                "title": "tyto-lang: Run File",
+                "icon": "$(play)"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "tyto.runFile",
+                "key": "ctrl+alt+r",
+                "mac": "cmd+alt+r",
+                "when": "editorLangId == tyto"
+            }
+        ]
+    }
+}

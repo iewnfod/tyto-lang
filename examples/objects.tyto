@@ -1,0 +1,36 @@
+// 对象字面量 + self：函数式构造链表
+function node(value, next) {
+    return {
+        value: value,
+        next: next,
+        to_list: function() {
+            out = [self.value]
+            cur = self.next
+            while cur != null {
+                out.push(cur.value)
+                cur = cur.next
+            }
+            return out
+        },
+        sum: function() {
+            total = 0
+            for x in self.to_list() { total += x }
+            return total
+        },
+    }
+}
+
+list = node(1, node(2, node(3, null)))
+println(list.to_list())
+println(list.sum())
+
+counter = {
+    n: 0,
+    inc: function() {
+        self.n += 1
+        return self.n
+    },
+}
+counter.inc()
+counter.inc()
+println(counter.n)

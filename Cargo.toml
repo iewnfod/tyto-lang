@@ -1,0 +1,13 @@
+[package]
+name = "tyto-lang"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[dependencies]
+colored = "3"
+indexmap = "2"
+
+[[bin]]
+name = "tyto"
+path = "src/main.rs"

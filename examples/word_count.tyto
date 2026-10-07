@@ -1,0 +1,19 @@
+// 单词计数：Map + 对象数组 + 比较器排序
+text = "the quick the lazy the dog quick quick"
+counts = new Map()
+for word in text.split(" ") {
+    if counts.has(word) {
+        counts.set(word, counts.get(word) + 1)
+    } else {
+        counts.set(word, 1)
+    }
+}
+
+pairs = []
+for w in counts.keys() {
+    pairs.push({word: w, n: counts.get(w)})
+}
+pairs.sort(function(a, b) { return b.n - a.n })
+for p in pairs {
+    println(p.word + ": " + str(p.n))
+}

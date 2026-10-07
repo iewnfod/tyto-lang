@@ -1,0 +1,66 @@
+h_low = null
+h_high = null
+
+function Init() {
+    h_low = new MaxHeap()
+    h_high = new MinHeap()
+}
+
+function Balance() {
+    // 如果 low 里面太多了，将 low 中最大的移动到 high 里
+    if h_low.len() > h_high.len() + 1 {
+        val = h_low.pop()
+        h_high.push(val)
+    }
+    // 只要 high 里面多了，那就移动到 low 里，保证 high.len <= low.len
+    if h_high.len() > h_low.len() {
+        val = h_high.pop()
+        h_low.push(val)
+    }
+}
+
+function Insert(x) {
+    // 总是往 low 里面插，只有在这个数本身就比 low 里面最大的大的时候插入 high 里面
+    if h_low.isEmpty() || x <= h_low.peek() {
+        h_low.push(x)
+    } else {
+        h_high.push(x)
+    }
+    // 平衡
+    Balance()
+}
+
+function Median() {
+    if h_low.isEmpty() && h_high.isEmpty() {
+        return EMPTY
+    }
+    if h_low.len() == h_high.len() {
+        low_peek = h_low.peek()
+        high_peek = h_high.peek()
+        return (low_peek + high_peek) / 2
+    } else {
+        // 因为 h_low.len >= h_high.len ，所以如果多了一个，那么多的一定在 low 里
+        return h_low.peek()
+    }
+}
+
+function DeleteMedian() {
+    if h_low.isEmpty() && h_high.isEmpty() {
+        return EMPTY
+    }
+
+    // 较小中位数永远在 low 的堆顶
+    m = h_low.pop()
+    Balance()
+    return m
+}
+
+// ---- 驱动 ----
+Init()
+Insert(5)
+Insert(1)
+Insert(3)
+Insert(2)
+println(Median())       // 2.5
+println(DeleteMedian()) // 2
+println(Median())       // 3

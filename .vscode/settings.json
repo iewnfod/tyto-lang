@@ -1,0 +1,6 @@
+{
+    // Tyto 源码文件关联（装了 editors/vscode 插件后可省，但保留以防未装插件时被误判为纯文本以外的东西）
+    "files.associations": {
+        "*.tyto": "tyto"
+    }
+}

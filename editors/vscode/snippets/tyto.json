@@ -1,0 +1,60 @@
+{
+    "function": {
+        "prefix": "fun",
+        "body": ["function ${1:name}(${2:params}) {", "\t$0", "}"],
+        "description": "函数声明"
+    },
+    "anonymous function": {
+        "prefix": "fn",
+        "body": ["function(${1:params}) {", "\t$0", "}"],
+        "description": "匿名函数"
+    },
+    "if": {
+        "prefix": "if",
+        "body": ["if ${1:cond} {", "\t$0", "}"],
+        "description": "if 分支"
+    },
+    "if else": {
+        "prefix": "ife",
+        "body": ["if ${1:cond} {", "\t$2", "} else {", "\t$0", "}"],
+        "description": "if / else"
+    },
+    "for in": {
+        "prefix": "forin",
+        "body": ["for ${1:x} in ${2:iter} {", "\t$0", "}"],
+        "description": "for-in 遍历"
+    },
+    "for range": {
+        "prefix": "forr",
+        "body": ["for ${1:i} in 0..${2:n} {", "\t$0", "}"],
+        "description": "for-in 区间"
+    },
+    "for c-style": {
+        "prefix": "forc",
+        "body": ["for ${1:i} = 0; $1 < ${2:n}; $1 += 1 {", "\t$0", "}"],
+        "description": "C 风格 for"
+    },
+    "while": {
+        "prefix": "while",
+        "body": ["while ${1:cond} {", "\t$0", "}"],
+        "description": "while 循环"
+    },
+    "println": {
+        "prefix": "prin",
+        "body": ["println($1)$0"],
+        "description": "println 输出"
+    },
+    "counter object": {
+        "prefix": "counter",
+        "body": [
+            "counter = {",
+            "    n: 0,",
+            "    inc: function() {",
+            "        self.n += 1",
+            "        return self.n",
+            "    },",
+            "}"
+        ],
+        "description": "带 self 方法的对象"
+    }
+}

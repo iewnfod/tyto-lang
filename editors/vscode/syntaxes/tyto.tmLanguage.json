@@ -1,0 +1,109 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "tyto-lang",
+    "scopeName": "source.tyto",
+    "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#function-decl" },
+        { "include": "#numbers" },
+        { "include": "#keywords" },
+        { "include": "#self" },
+        { "include": "#language-constants" },
+        { "include": "#builtin-classes" },
+        { "include": "#stdlib-functions" },
+        { "include": "#operators" }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.tyto",
+                    "begin": "//",
+                    "end": "$"
+                },
+                {
+                    "name": "comment.block.tyto",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.tyto",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.tyto",
+                            "match": "\\\\(n|r|t|0|\\\\|\"|')"
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.tyto",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.tyto",
+                            "match": "\\\\(n|r|t|0|\\\\|\"|')"
+                        }
+                    ]
+                }
+            ]
+        },
+        "function-decl": {
+            "comment": "function 声明：函数名高亮",
+            "match": "\\b(function)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+            "captures": {
+                "1": { "name": "storage.type.function.tyto" },
+                "2": { "name": "entity.name.function.tyto" }
+            }
+        },
+        "numbers": {
+            "match": "(?<![\\w.])(\\d+(\\.\\d+)?([eE][+-]?\\d+)?|\\.\\d+([eE][+-]?\\d+)?)(?!\\w)",
+            "captures": {
+                "0": { "name": "constant.numeric.tyto" }
+            }
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.tyto",
+                    "match": "\\b(if|else|while|for|in|break|continue|return)\\b"
+                },
+                {
+                    "name": "storage.type.tyto",
+                    "match": "\\b(function|new)\\b"
+                },
+                {
+                    "name": "constant.language.tyto",
+                    "match": "\\b(true|false|null)\\b"
+                }
+            ]
+        },
+        "self": {
+            "name": "variable.language.self.tyto",
+            "match": "\\bself\\b"
+        },
+        "language-constants": {
+            "name": "support.constant.tyto",
+            "match": "\\b(EMPTY|inf|nan)\\b"
+        },
+        "builtin-classes": {
+            "name": "support.class.tyto",
+            "match": "\\b(MaxHeap|MinHeap|Map)\\b"
+        },
+        "stdlib-functions": {
+            "name": "support.function.tyto",
+            "match": "\\b(print|println|input|num|str|len|type|has|floor|ceil|round|abs|sqrt|pow|min|max)\\b"
+        },
+        "operators": {
+            "name": "keyword.operator.tyto",
+            "match": "\\.\\.=|\\.\\.|\\?\\.|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|%=|[-+*/%<>=!?:,.]"
+        }
+    }
+}

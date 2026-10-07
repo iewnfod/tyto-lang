@@ -1,0 +1,16 @@
+// 递归 + Map 记忆化的 fib
+memo = new Map()
+
+function fib(n) {
+    if n < 2 { return n }
+    if memo.has(n) { return memo.get(n) }
+    r = fib(n - 1) + fib(n - 2)
+    memo.set(n, r)
+    return r
+}
+
+for i in 0..10 {
+    print(str(fib(i)) + " ")
+}
+println()
+println(fib(50))
