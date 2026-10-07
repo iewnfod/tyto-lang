@@ -1,0 +1,24 @@
+// BFS 最短路：Queue + Map 邻接表
+graph = new Map()
+graph.insert("a", ["b", "c"])
+graph.insert("b", ["d"])
+graph.insert("c", ["d", "e"])
+graph.insert("d", ["e"])
+graph.insert("e", [])
+
+dist = new Map()
+dist.insert("a", 0)
+q = new Queue(["a"])
+while !q.is_empty() {
+    u = q.pop_front()
+    for v in graph.get(u) {
+        if !dist.contains_key(v) {
+            dist.insert(v, dist.get(u) + 1)
+            q.push_back(v)
+        }
+    }
+}
+
+for node in ["b", "c", "d", "e"] {
+    println(node + ": " + str(dist.get(node)))
+}

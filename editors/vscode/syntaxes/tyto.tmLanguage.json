@@ -95,7 +95,7 @@
         },
         "builtin-classes": {
             "name": "support.class.tyto",
-            "match": "\\b(MaxHeap|MinHeap|Map)\\b"
+            "match": "\\b(MaxHeap|MinHeap|Map|Stack|Queue)\\b"
         },
         "stdlib-functions": {
             "name": "support.function.tyto",

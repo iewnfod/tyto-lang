@@ -54,11 +54,11 @@ p.x = 5                        // 字段自动创建
 p?.x                           // p 为 null 时返回 null；读缺失字段报错
 p.inc = function() { self.n += 1 }   // obj.f() 调用自动绑定 self
 
-// 原生类型：new MaxHeap() / new MinHeap()（可选数组建堆）/ new Map()
+// 原生类型：new MaxHeap() / new MinHeap()（可选数组建堆）/ new Map() / new Stack() / new Queue()
 h = new MaxHeap([3, 1])
 h.push(4); h.pop(); h.peek(); h.len(); h.is_empty()   // 空堆 pop/peek 返回 EMPTY
 m = new Map()                  // 键：number/string/bool/null，保序
-m.insert(k, v).insert(k2, v2)        // set 可链式
+m.insert(k, v).insert(k2, v2)  // insert 可链式
 m.get(k)                       // 缺失返回 null
 ```
 
@@ -74,6 +74,8 @@ m.get(k)                       // 缺失返回 null
 
 **堆**（`BinaryHeap` 原生实现）：`push` `pop` `peek` `len` `is_empty`
 
+**栈/队列**（Vec / VecDeque）：Stack `push` `pop` `peek` `len` `is_empty`；Queue `push_back` `pop_front` `front` `back` `len` `is_empty`（空容器取值返回 `EMPTY`）
+
 ## 语义要点
 
 | 规则 | 行为 |
@@ -88,7 +90,7 @@ m.get(k)                       // 缺失返回 null
 
 ## 示例
 
-见 [examples/](examples/)：`median.tyto`（双堆中位数，原样来自日常伪代码）、`fib.tyto`（Map 记忆化）、`word_count.tyto`、`objects.tyto`（self 链表）。仓库自带 `.vscode/settings.json`，把 `*.tyto` 关联为独立语言，不会被编辑器误认成 R。
+见 [examples/](examples/)：`median.tyto`（双堆中位数，原样来自日常伪代码）、`bfs.tyto`（Queue + Map 最短路）、`fib.tyto`（Map 记忆化）、`word_count.tyto`、`objects.tyto`（self 链表）。仓库自带 `.vscode/settings.json`，把 `*.tyto` 关联为独立语言，不会被编辑器误认成 R。
 
 ## 编辑器支持
 

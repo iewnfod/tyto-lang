@@ -248,9 +248,102 @@ fn heap_heapify_and_type_rules() {
     assert!(matches!(run_err("new MaxHeap([\"a\"])"), RtError::Runtime { .. }));
 }
 
+// ============ 栈 / 队列 ============
+
 #[test]
-fn heap_median_two_heaps_pattern() {
-    // 双堆求中位数的骨架（不依赖全局变量名）
+fn stack_lifo_with_empty_sentinel() {
+    let src = "s = new Stack()\n\
+               println(s.is_empty())\n\
+               println(s.pop(), s.peek())\n\
+               s.push(1)\n\
+               s.push(\"two\")\n\
+               s.push([3])\n\
+               println(s.peek())\n\
+               println(s.len(), s.is_empty())\n\
+               println(s)\n\
+               println(s.pop(), s.pop(), s.pop(), s.pop())";
+    assert_eq!(run(src), "true\nEMPTY EMPTY\n[3]\n3 false\nStack[1, \"two\", [3]]\n[3] two 1 EMPTY\n");
+}
+
+#[test]
+fn stack_init_from_array() {
+    // 数组顺序 = 从底到顶
+    assert_eq!(run("s = new Stack([1, 2, 3])\nprintln(s.pop(), s)"), "3 Stack[1, 2]\n");
+    assert!(matches!(run_err("new Stack(3)"), RtError::Runtime { .. }));
+    assert!(matches!(run_err("new Stack(1, 2)"), RtError::Runtime { .. }));
+}
+
+#[test]
+fn queue_fifo_vecdeque_naming() {
+    let src = "q = new Queue()\n\
+               println(q.is_empty(), q.pop_front(), q.front(), q.back())\n\
+               q.push_back(1)\n\
+               q.push_back(2)\n\
+               q.push_back(3)\n\
+               println(q.front(), q.back(), q.len())\n\
+               println(q)\n\
+               println(q.pop_front())\n\
+               println(q.front(), q)\n\
+               q.push_back(4)\n\
+               println(q)\n\
+               println(q.pop_front(), q.pop_front(), q.pop_front(), q.pop_front())";
+    assert_eq!(
+        run(src),
+        "true EMPTY EMPTY EMPTY\n1 3 3\nQueue[1, 2, 3]\n1\n2 Queue[2, 3]\nQueue[2, 3, 4]\n2 3 4 EMPTY\n"
+    );
+}
+
+#[test]
+fn queue_init_from_array() {
+    // 数组顺序 = 队头到队尾
+    assert_eq!(
+        run("q = new Queue([\"a\", \"b\"])\nprintln(q.pop_front(), q.pop_front(), q.pop_front())"),
+        "a b EMPTY\n"
+    );
+}
+
+#[test]
+fn stack_queue_type_and_equality() {
+    assert_eq!(
+        run("println(type(new Stack()), type(new Queue()))"),
+        "stack queue\n"
+    );
+    // 引用语义
+    assert_eq!(
+        run("a = new Stack()\nb = a\nc = new Stack()\nprintln(a == b, a == c)"),
+        "true false\n"
+    );
+    // 值可异构
+    assert_eq!(run("s = new Stack()\ns.push({x: 1})\nprintln(s.pop().x)"), "1\n");
+}
+
+#[test]
+fn bfs_shortest_path_with_queue_and_map() {
+    let src = "graph = new Map()\n\
+               graph.insert(\"a\", [\"b\", \"c\"])\n\
+               graph.insert(\"b\", [\"d\"])\n\
+               graph.insert(\"c\", [\"d\", \"e\"])\n\
+               graph.insert(\"d\", [])\n\
+               graph.insert(\"e\", [])\n\
+               \n\
+               dist = new Map()\n\
+               dist.insert(\"a\", 0)\n\
+               q = new Queue([\"a\"])\n\
+               while !q.is_empty() {\n\
+               \x20   u = q.pop_front()\n\
+               \x20   for v in graph.get(u) {\n\
+               \x20       if !dist.contains_key(v) {\n\
+               \x20           dist.insert(v, dist.get(u) + 1)\n\
+               \x20           q.push_back(v)\n\
+               \x20       }\n\
+               \x20   }\n\
+               }\n\
+               println(dist.get(\"d\"), dist.get(\"e\"))";
+    assert_eq!(run(src), "2 2\n");
+}
+
+#[test]
+fn heap_median_two_heaps_pattern() {    // 双堆求中位数的骨架（不依赖全局变量名）
     let src = "low = new MaxHeap()\n\
                high = new MinHeap()\n\
                function insert(x) {\n\

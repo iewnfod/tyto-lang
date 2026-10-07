@@ -12,6 +12,7 @@
 - [内置类型：String](#内置类型string)
 - [内置类型：Map](#内置类型map)
 - [内置类型：MaxHeap / MinHeap](#内置类型maxheap--minheap)
+- [内置类型：Stack / Queue](#内置类型stack--queue)
 - [全局函数](#全局函数)
 - [CLI 与 REPL](#cli-与-repl)
 - [与 JS / Rust 的差异速查](#与-js--rust-的差异速查)
@@ -84,6 +85,8 @@ true  false  null  new
 | object | `"object"` | `{x: 1}`，字符串字段，保序 |
 | map | `"map"` | `new Map()`，键限原始类型，保序 |
 | maxheap / minheap | `"maxheap"` / `"minheap"` | 数字堆 |
+| stack | `"stack"` | `new Stack()`，LIFO |
+| queue | `"queue"` | `new Queue()`，FIFO |
 | function | `"function"` | 闭包（`print` 等原生函数为 `"native function"`） |
 
 ### number 细则（JS 式）
@@ -421,7 +424,36 @@ h.pop()                    // 3（最大者；MinHeap 为最小者）
 | len | `len() → number` | |
 | is_empty | `is_empty() → bool` | |
 
-`new` 只能构造原生类（Map/MaxHeap/MinHeap）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
+`new` 只能构造原生类（Map / MaxHeap / MinHeap / Stack / Queue）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
+
+---
+
+## 内置类型：Stack / Queue
+
+栈（`Vec`，LIFO）与队列（`VecDeque`，FIFO）。元素可异构；空容器取值返回 `EMPTY`（与堆一致；数组的 `pop()` 空才返回 `null`）。
+
+```
+s = new Stack()          // 或 new Stack([1, 2, 3])（数组顺序 = 底→顶）
+s.push(1)
+s.push("two")
+s.peek()                 // "two"（看顶，不移除）
+s.pop()                  // "two"（移除并返回）
+s.len()
+s.is_empty()
+
+q = new Queue()          // 或 new Queue(["a", "b"])（数组顺序 = 队头→队尾）
+q.push_back(1)
+q.front()                // 1（队头，不移除）
+q.back()                 // 队尾
+q.pop_front()            // 1（出队）
+```
+
+| 类型 | 方法 | 说明 |
+|---|---|---|
+| Stack | `push(x)` `pop()` `peek()` `len()` `is_empty()` | `pop`/`peek` 空时返回 `EMPTY` |
+| Queue | `push_back(x)` `pop_front()` `front()` `back()` `len()` `is_empty()` | 命名对齐 Rust `VecDeque`；`pop_front`/`front`/`back` 空时返回 `EMPTY` |
+
+显示格式：`Stack[1, 2, 3]`（顶在右）、`Queue[1, 2, 3]`（队头在左）。BFS 用法见 `examples/bfs.tyto`。
 
 ---
 
@@ -466,7 +498,7 @@ if line == null { println("结束") }
 
 | 名字 | 值 |
 |---|---|
-| `EMPTY` | 哨兵（空堆 pop/peek 返回它；`== EMPTY` 判断；真值为假） |
+| `EMPTY` | 哨兵（空堆/空栈/空队列 的 pop/peek/pop_front/front/back 返回它；`== EMPTY` 判断；真值为假） |
 | `inf` / `nan` | 正无穷 / 非数 |
 
 ---

@@ -41,6 +41,14 @@ fn objects_example() {
     assert_eq!(run_file("examples/objects.tyto"), "[1, 2, 3]\n6\n2\n");
 }
 
+#[test]
+fn bfs_example() {
+    assert_eq!(
+        run_file("examples/bfs.tyto"),
+        "b: 1\nc: 1\nd: 2\ne: 2\n"
+    );
+}
+
 /// 中位数删除序列的更完整推演
 #[test]
 fn median_stream_sequence() {

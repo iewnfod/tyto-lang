@@ -53,6 +53,8 @@ impl Interpreter {
         scope::define(g, "nan", Value::Num(f64::NAN));
         scope::define(g, "MaxHeap", Value::NativeClass(NativeClass::MaxHeap));
         scope::define(g, "MinHeap", Value::NativeClass(NativeClass::MinHeap));
+        scope::define(g, "Stack", Value::NativeClass(NativeClass::Stack));
+        scope::define(g, "Queue", Value::NativeClass(NativeClass::Queue));
         scope::define(g, "Map", Value::NativeClass(NativeClass::Map));
         scope::define(g, "print", Value::NativeFn("print"));
         scope::define(g, "println", Value::NativeFn("println"));
@@ -722,7 +724,7 @@ impl Interpreter {
         let Value::NativeClass(kind) = class else {
             return Err(RtError::runtime(
                 Some(span),
-                "only native classes (Map / MaxHeap / MinHeap) can be constructed in v1",
+                "only native classes (Map / MaxHeap / MinHeap / Stack / Queue) can be constructed in v1",
             ));
         };
         match kind {
@@ -734,6 +736,14 @@ impl Interpreter {
                     ));
                 }
                 Ok(Value::Map(Rc::new(RefCell::new(crate::value::MapObj::default()))))
+            }
+            NativeClass::Stack => {
+                let items = eval_init_items(self, args, *kind, span)?;
+                Ok(Value::Stack(Rc::new(RefCell::new(items))))
+            }
+            NativeClass::Queue => {
+                let items = eval_init_items(self, args, *kind, span)?;
+                Ok(Value::Queue(Rc::new(RefCell::new(items.into_iter().collect()))))
             }
             NativeClass::MaxHeap | NativeClass::MinHeap => {
                 let items: Vec<Value> = match args {
@@ -777,6 +787,36 @@ impl Interpreter {
                 })
             }
         }
+    }
+}
+
+/// Stack()/Queue() 的初始化参数：无参或单个数组（按序装入，可异构）
+fn eval_init_items(
+    interp: &mut Interpreter,
+    args: &[Expr],
+    kind: NativeClass,
+    span: Span,
+) -> RtResult<Vec<Value>> {
+    match args {
+        [] => Ok(vec![]),
+        [one] => {
+            let v = interp.evaluate(one)?;
+            match v {
+                Value::Array(a) => Ok(a.borrow().clone()),
+                other => Err(RtError::runtime(
+                    Some(span),
+                    format!(
+                        "{}() takes no arguments or an array, got {}",
+                        kind.name(),
+                        other.type_name()
+                    ),
+                )),
+            }
+        }
+        _ => Err(RtError::runtime(
+            Some(span),
+            format!("{}() takes 0 or 1 argument", kind.name()),
+        )),
     }
 }
 

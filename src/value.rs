@@ -1,4 +1,4 @@
-use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::{BinaryHeap, VecDeque}, rc::Rc};
 
 use indexmap::IndexMap;
 
@@ -106,6 +106,8 @@ pub enum NativeClass {
     Map,
     MaxHeap,
     MinHeap,
+    Stack,
+    Queue,
 }
 
 impl NativeClass {
@@ -114,6 +116,8 @@ impl NativeClass {
             NativeClass::Map => "Map",
             NativeClass::MaxHeap => "MaxHeap",
             NativeClass::MinHeap => "MinHeap",
+            NativeClass::Stack => "Stack",
+            NativeClass::Queue => "Queue",
         }
     }
 }
@@ -143,6 +147,8 @@ pub enum Value {
     Map(Rc<RefCell<MapObj>>),
     MaxHeap(Rc<RefCell<BinaryHeap<HeapVal>>>),
     MinHeap(Rc<RefCell<BinaryHeap<std::cmp::Reverse<HeapVal>>>>),
+    Stack(Rc<RefCell<Vec<Value>>>),
+    Queue(Rc<RefCell<VecDeque<Value>>>),
     NativeClass(NativeClass),
     NativeFn(&'static str),
     Func(Rc<FuncObj>),
@@ -202,6 +208,16 @@ impl Value {
                 let items: Vec<String> = v.into_iter().map(fmt_num).collect();
                 format!("MinHeap[{}]", items.join(", "))
             }
+            Value::Stack(s) => {
+                // 从底到顶，顶在右
+                let items: Vec<String> = s.borrow().iter().map(|v| v.to_repr()).collect();
+                format!("Stack[{}]", items.join(", "))
+            }
+            Value::Queue(q) => {
+                // 从队头到队尾
+                let items: Vec<String> = q.borrow().iter().map(|v| v.to_repr()).collect();
+                format!("Queue[{}]", items.join(", "))
+            }
             Value::NativeClass(c) => format!("<class {}>", c.name()),
             Value::NativeFn(name) => format!("<native fn {}>", name),
             Value::Func(f) => {
@@ -237,6 +253,8 @@ impl Value {
             Value::Map(_) => "map",
             Value::MaxHeap(_) => "maxheap",
             Value::MinHeap(_) => "minheap",
+            Value::Stack(_) => "stack",
+            Value::Queue(_) => "queue",
             Value::NativeClass(_) => "class",
             Value::NativeFn(_) => "native function",
             Value::Func(_) => "function",
@@ -257,6 +275,8 @@ pub fn eq_value(a: &Value, b: &Value) -> bool {
         (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
         (Value::MaxHeap(x), Value::MaxHeap(y)) => Rc::ptr_eq(x, y),
         (Value::MinHeap(x), Value::MinHeap(y)) => Rc::ptr_eq(x, y),
+        (Value::Stack(x), Value::Stack(y)) => Rc::ptr_eq(x, y),
+        (Value::Queue(x), Value::Queue(y)) => Rc::ptr_eq(x, y),
         (Value::NativeClass(x), Value::NativeClass(y)) => x == y,
         (Value::NativeFn(x), Value::NativeFn(y)) => x == y,
         (Value::Func(x), Value::Func(y)) => Rc::ptr_eq(x, y),

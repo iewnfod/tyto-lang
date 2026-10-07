@@ -14,7 +14,7 @@ const GLOBALS = [
     ['input', 'input() → string | null', '读入一行；EOF 返回 null'],
     ['num', 'num(x) → number', '字符串/数字转数字；非法字符串报错'],
     ['str', 'str(x) → string', '任意值转字符串'],
-    ['len', 'len(x) → number', '长度：数组 / 字符串 / 对象 / Map / 堆'],
+    ['len', 'len(x) → number', '长度：数组 / 字符串 / 对象 / Map / 堆 / 栈 / 队列'],
     ['type', 'type(x) → string', '类型名：number/string/bool/null/array/object/map/maxheap/minheap/function'],
     ['has', 'has(obj, "field") → bool', '对象是否有某字段（Map 请用 .contains_key() 方法）'],
     ['floor', 'floor(x) → number', '向下取整'],
@@ -30,6 +30,8 @@ const GLOBALS = [
 const CLASSES = [
     ['MaxHeap', 'new MaxHeap() / new MaxHeap(arr)', '最大堆（Rust BinaryHeap 原生实现）；push/pop/peek/len/is_empty，空堆 pop/peek 返回 EMPTY'],
     ['MinHeap', 'new MinHeap() / new MinHeap(arr)', '最小堆；push/pop/peek/len/is_empty，空堆 pop/peek 返回 EMPTY'],
+    ['Stack', 'new Stack() / new Stack(arr)', '栈（Vec，LIFO）；push/pop/peek/len/is_empty，空栈 pop/peek 返回 EMPTY；数组顺序 = 底→顶'],
+    ['Queue', 'new Queue() / new Queue(arr)', '队列（VecDeque，FIFO）；push_back/pop_front/front/back/len/is_empty，空队列取值返回 EMPTY；数组顺序 = 队头→队尾'],
     ['Map', 'new Map()', '保序哈希表；键限 number/string/bool/null；get/set/has/remove/len/keys/values'],
 ];
 
@@ -41,11 +43,16 @@ const CONSTANTS = [
 
 // 无类型信息：`.` 后给出所有原生方法，detail 标注适用类型
 const METHODS = [
-    ['push', '.push(x)', 'array（多参数，返回新长度）/ maxheap / minheap（仅数字）'],
-    ['pop', '.pop()', 'array（空→null）/ maxheap / minheap（空→EMPTY）'],
-    ['peek', '.peek()', 'maxheap / minheap 堆顶；空返回 EMPTY'],
-    ['len', '.len()', 'array / string / map / maxheap / minheap'],
-    ['is_empty', '.is_empty()', 'array / string / map / maxheap / minheap'],    ['contains', '.contains(x)', 'array / string 是否包含'],
+    ['push', '.push(x)', 'array（多参数，返回新长度）/ stack / maxheap / minheap（仅数字）'],
+    ['pop', '.pop()', 'array（空→null）/ stack（空→EMPTY）/ maxheap / minheap（空→EMPTY）'],
+    ['peek', '.peek()', 'stack 栈顶 / maxheap / minheap 堆顶；空返回 EMPTY'],
+    ['push_back', '.push_back(x)', 'queue 入队（队尾）'],
+    ['pop_front', '.pop_front()', 'queue 出队（队头）；空返回 EMPTY'],
+    ['front', '.front()', 'queue 队头（不移除）；空返回 EMPTY'],
+    ['back', '.back()', 'queue 队尾（不移除）；空返回 EMPTY'],
+    ['len', '.len()', 'array / string / map / maxheap / minheap / stack / queue'],
+    ['is_empty', '.is_empty()', 'array / string / map / maxheap / minheap / stack / queue'],
+    ['contains', '.contains(x)', 'array / string 是否包含'],
     ['index_of', '.index_of(x)', 'array / string 首次出现的下标；未找到 -1'],
     ['join', '.join(sep?)', 'array 连接为字符串；默认 ","'],
     ['sort', '.sort() / .sort(f)', 'array 就地排序并返回自身；比较器 f(a,b)→number，负数在前'],

@@ -1,4 +1,5 @@
 pub mod arrays;
+pub mod collections;
 pub mod fns;
 pub mod heaps;
 pub mod maps;
@@ -33,6 +34,7 @@ pub fn call_method(
         Value::Str(_) => strings::call(receiver, name, args, interp, span),
         Value::Map(_) => maps::call(receiver, name, args, interp, span),
         Value::MaxHeap(_) | Value::MinHeap(_) => heaps::call(receiver, name, args, interp, span),
+        Value::Stack(_) | Value::Queue(_) => collections::call(receiver, name, args, interp, span),
         other => Err(RtError::runtime(
             Some(span),
             format!("`{}` has no method `{}`", other.type_name(), name),
