@@ -14,6 +14,7 @@ fn main() {
         Command::RunScript { path, script_args } => run_file(&path, script_args),
         Command::DumpTokens { path } => dump_tokens(&path),
         Command::DumpAst { path } => dump_ast(&path),
+        Command::Lsp => tyto_lang::lsp::run(),
     }
 }
 

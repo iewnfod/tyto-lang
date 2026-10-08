@@ -771,6 +771,7 @@ for a in sys.args() {
 ```sh
 tyto script.tyto      # 运行脚本（后缀无所谓，解释器不检查）；额外的参数经 sys.args() 传给脚本
 tyto                  # REPL
+tyto lsp              # 语言服务器（stdio，编辑器插件用；补全/悬停的类型推导）
 tyto --tokens f       # 调试：打印 token 流（行:列 + 类型），短参 -t
 tyto --ast f          # 调试：打印 AST，短参 -a
 ```

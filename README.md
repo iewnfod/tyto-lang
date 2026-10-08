@@ -17,15 +17,14 @@ tyto --help                # 完整 CLI 说明
 
 ## 编辑器支持
 
-`editors/vscode/` 是官方 VSCode 插件（高亮 / 补全 / 悬停文档 / `Ctrl+Alt+R` 运行当前文件）：
+`editors/vscode/` 是官方 VSCode 插件（高亮 / **类型推导补全** / 悬停文档 / `Ctrl+Alt+R` 运行当前文件）：
 
 ```sh
-cd editors/vscode
-npx @vscode/vsce package --allow-missing-repository
-code --install-extension tyto-lang-0.0.1.vsix
+cargo install --path .        # 先装 tyto（补全/悬停的语言服务器）
+./editors/vscode/install.sh   # 一键打包并安装
 ```
 
-详见 [editors/vscode/README.md](editors/vscode/README.md)。
+补全与悬停由 `tyto lsp` 语言服务器提供：变量带推断类型、用户函数完整签名、`.` 后按接收者类型过滤方法、struct 字段/方法与 `self` 感知；服务器不可用时插件自动降级为静态表。详见 [editors/vscode/README.md](editors/vscode/README.md)。
 
 ## v2 方向（部分已实现）
 

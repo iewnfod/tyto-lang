@@ -15,6 +15,7 @@ use colored::Colorize;
 pub struct Settings {
     dump_tokens: bool,
     dump_ast: bool,
+    lsp: bool,
 }
 
 /// 解析 argv 得到的执行指令
@@ -24,6 +25,8 @@ pub enum Command {
     RunScript { path: String, script_args: Vec<String> },
     DumpTokens { path: String },
     DumpAst { path: String },
+    /// `tyto lsp`：stdio 语言服务器（编辑器插件用）
+    Lsp,
 }
 
 /// 单个选项（对应 caie-code 的 Opt 类）：
@@ -120,6 +123,10 @@ pub fn parse(argv: &[String]) -> Command {
             i += opt.value_num;
         } else if arg.starts_with('-') && arg.len() > 1 {
             wrong_argument(arg);
+        } else if arg == "lsp" && file.is_none() && script_args.is_empty() {
+            // 子命令风格：首个位置参数为 `lsp` → 语言服务器。
+            // 真有脚本叫 lsp 时用 `./lsp` 或放在 `--` 之后即可区分。
+            settings.lsp = true;
         } else {
             push_positional(arg, &mut file, &mut script_args);
         }
@@ -133,6 +140,7 @@ pub fn parse(argv: &[String]) -> Command {
         Some(path) => Command::RunScript { path, script_args },
         None if settings.dump_tokens => missing_file("--tokens"),
         None if settings.dump_ast => missing_file("--ast"),
+        None if settings.lsp => Command::Lsp,
         None => Command::Repl,
     }
 }
@@ -151,6 +159,7 @@ fn print_help() {
     println!("tyto — Tyto language interpreter v{}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage: tyto [file.tyto] [options] [-- script_args...]");
+    println!("       tyto lsp                (stdio language server for editors)");
     println!();
     println!("  With no arguments, starts the REPL; arguments after <file> are passed to the script via sys.args()");
     println!("  Arguments after `--` are never parsed as options and are passed to the script as-is");
@@ -238,6 +247,28 @@ mod tests {
             Command::RunScript {
                 path: "s.tyto".into(),
                 script_args: vec!["-t".into(), "b".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn lsp_subcommand() {
+        assert_eq!(parse_args(&["lsp"]), Command::Lsp);
+    }
+
+    #[test]
+    fn script_named_lsp_still_runs_after_flag() {
+        // 文件先出现时 `lsp` 只是普通脚本参数
+        assert_eq!(
+            parse_args(&["s.tyto", "lsp"]),
+            Command::RunScript { path: "s.tyto".into(), script_args: vec!["lsp".into()] }
+        );
+        // `--` 之后不解析选项，`lsp` 原样传给脚本
+        assert_eq!(
+            parse_args(&["s.tyto", "--", "lsp"]),
+            Command::RunScript {
+                path: "s.tyto".into(),
+                script_args: vec!["lsp".into()],
             }
         );
     }

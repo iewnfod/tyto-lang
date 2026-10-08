@@ -1,7 +1,9 @@
+pub mod analysis;
 pub mod ast;
 pub mod error;
 pub mod interpreter;
 pub mod lexer;
+pub mod lsp;
 pub mod natives;
 pub mod parser;
 pub mod repl;

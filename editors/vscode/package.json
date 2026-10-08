@@ -1,8 +1,8 @@
 {
     "name": "tyto-lang",
     "displayName": "Tyto",
-    "description": "tyto-lang 语法高亮、补全、悬停文档与运行命令",
-    "version": "0.0.1",
+    "description": "tyto-lang 语法高亮、类型推导补全、悬停文档与运行命令",
+    "version": "0.0.2",
     "publisher": "iewnfod",
     "license": "MPL-2.0",
     "engines": {
@@ -57,6 +57,16 @@
                 "mac": "cmd+alt+r",
                 "when": "editorLangId == tyto"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Tyto",
+            "properties": {
+                "tyto.serverPath": {
+                    "type": "string",
+                    "default": "tyto",
+                    "markdownDescription": "`tyto` 可执行文件路径（语言服务器）。留空使用 PATH 上的 `tyto`；服务器不可用时补全/悬停自动降级为静态模式。"
+                }
+            }
+        }
     }
 }

@@ -2,8 +2,8 @@ use colored::Colorize;
 
 pub type RtResult<T> = Result<T, RtError>;
 
-/// 源码位置（1-based）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// 源码位置（1-based）；derive 出的字典序 = 源码位置先后
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Span {
     pub line: usize,
     pub col: usize,

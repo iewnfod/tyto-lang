@@ -1,10 +1,13 @@
 const vscode = require('vscode');
+const { spawn } = require('child_process');
 
-// ============ 标准库数据表（补全与悬停共用） ============
+// ============ 标准库数据表（降级用：tyto lsp 不可用时保持基础体验） ============
+// 与 Rust 端 src/analysis/builtins.rs 同源；完整类型推导见语言服务器。
 
 const KEYWORDS = [
     'if', 'else', 'while', 'for', 'in', 'break', 'continue', 'return',
     'function', 'new', 'true', 'false', 'null', 'self',
+    'struct', 'impl', 'interface', 'is',
 ];
 
 // [名称, 签名, 文档]
@@ -32,7 +35,7 @@ const CLASSES = [
     ['MinHeap', 'new MinHeap() / new MinHeap(arr)', '最小堆；push/pop/peek/len/is_empty，空堆 pop/peek 返回 EMPTY'],
     ['Stack', 'new Stack() / new Stack(arr)', '栈（Vec，LIFO）；push/pop/peek/len/is_empty，空栈 pop/peek 返回 EMPTY；数组顺序 = 底→顶'],
     ['Queue', 'new Queue() / new Queue(arr)', '队列（VecDeque，FIFO）；push_back/pop_front/front/back/len/is_empty，空队列取值返回 EMPTY；数组顺序 = 队头→队尾'],
-    ['Map', 'new Map()', '保序哈希表；键限 number/string/bool/null；get/set/has/remove/len/keys/values'],
+    ['Map', 'new Map()', '保序哈希表；键限 number/string/bool/null；get/insert/contains_key/remove/len/keys/values'],
 ];
 
 const CONSTANTS = [
@@ -95,7 +98,7 @@ const CLASS_MAP = new Map(CLASSES.map(([k, sig, doc]) => [k, { sig, doc }]));
 const CONST_MAP = new Map(CONSTANTS.map(([k, sig, doc]) => [k, { sig, doc }]));
 const METHOD_MAP = new Map(METHODS.map(([k, sig, doc]) => [k, { sig, doc }]));
 
-// ============ 补全 ============
+// ============ 静态降级实现（原版逻辑） ============
 
 function completion(name, sig, doc, kind) {
     const item = new vscode.CompletionItem(name, kind);
@@ -104,7 +107,7 @@ function completion(name, sig, doc, kind) {
     return item;
 }
 
-function provideCompletionItems(document, position) {
+function staticCompletion(document, position) {
     const prefix = document.lineAt(position).text.slice(0, position.character);
     const afterDot = /\.\s*\w*$/.test(prefix);
 
@@ -129,9 +132,7 @@ function provideCompletionItems(document, position) {
     return items;
 }
 
-// ============ 悬停文档 ============
-
-function provideHover(document, position) {
+function staticHover(document, position) {
     const range = document.getWordRangeAtPosition(position);
     if (!range) return null;
     const word = document.getText(range);
@@ -145,6 +146,169 @@ function provideHover(document, position) {
         : GLOBAL_MAP.get(word) || CLASS_MAP.get(word) || CONST_MAP.get(word);
     if (!entry) return null;
     return new vscode.Hover(`**${entry.sig}**\n\n${entry.doc}`);
+}
+
+// ============ 最小 LSP 客户端（tyto lsp，stdio + Content-Length 分帧） ============
+
+const REQUEST_TIMEOUT_MS = 5000;
+
+class LspClient {
+    constructor(command, outputChannel) {
+        this.pending = new Map(); // id → { resolve, reject, timer }
+        this.nextId = 1;
+        this.ready = false;
+        this.dead = false;
+        this.outputChannel = outputChannel;
+
+        let child;
+        try {
+            child = spawn(command, ['lsp'], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } catch (e) {
+            this.dead = true;
+            return;
+        }
+        this.child = child;
+
+        child.on('error', (e) => {
+            this.outputChannel.appendLine(`无法启动语言服务器（${command} lsp）：${e.message}`);
+            this.outputChannel.appendLine('补全/悬停已降级为静态模式。可设置 tyto.serverPath 指定 tyto 路径。');
+            this.failAll(new Error('server error'));
+            this.dead = true;
+        });
+        child.on('exit', (code) => {
+            if (!this.dead) {
+                this.outputChannel.appendLine(`语言服务器已退出（code ${code}），降级为静态模式。`);
+            }
+            this.failAll(new Error('server exited'));
+            this.dead = true;
+        });
+        child.stderr.on('data', (d) => {
+            this.outputChannel.append(d.toString());
+        });
+
+        // 分帧读：累积缓冲，解析 Content-Length 头 + JSON 体
+        this.buffer = Buffer.alloc(0);
+        child.stdout.on('data', (chunk) => {
+            this.buffer = Buffer.concat([this.buffer, chunk]);
+            this.drain();
+        });
+
+        this.initPromise = this.initialize();
+    }
+
+    initialize() {
+        return this.request('initialize', {
+            processId: process.pid,
+            rootUri: null,
+            capabilities: {},
+        }).then(() => {
+            this.notify('initialized', {});
+            this.ready = true;
+            this.outputChannel.appendLine(`语言服务器已就绪（${this.child.spawnargs.join(' ')}）`);
+        });
+    }
+
+    drain() {
+        for (;;) {
+            const headerEnd = this.buffer.indexOf('\r\n\r\n');
+            if (headerEnd < 0) return;
+            const header = this.buffer.slice(0, headerEnd).toString();
+            const m = /Content-Length:\s*(\d+)/i.exec(header);
+            if (!m) {
+                // 协议流损坏：丢弃缓冲，防止永久卡死
+                this.buffer = Buffer.alloc(0);
+                return;
+            }
+            const length = parseInt(m[1], 10);
+            const bodyStart = headerEnd + 4;
+            if (this.buffer.length < bodyStart + length) return; // 等待更多数据
+            const body = this.buffer.slice(bodyStart, bodyStart + length);
+            this.buffer = this.buffer.slice(bodyStart + length);
+            let msg;
+            try {
+                msg = JSON.parse(body.toString());
+            } catch {
+                continue;
+            }
+            this.dispatch(msg);
+        }
+    }
+
+    dispatch(msg) {
+        if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+            const entry = this.pending.get(msg.id);
+            if (!entry) return;
+            this.pending.delete(msg.id);
+            clearTimeout(entry.timer);
+            if (msg.error) {
+                entry.reject(new Error(msg.error.message || 'LSP error'));
+            } else {
+                entry.resolve(msg.result);
+            }
+        }
+        // 服务端主动通知（window/logMessage 等）：仅展示，不处理
+        if (msg.method === 'window/logMessage' && msg.params && msg.params.message) {
+            this.outputChannel.appendLine(msg.params.message);
+        }
+    }
+
+    failAll(err) {
+        for (const [, entry] of this.pending) {
+            clearTimeout(entry.timer);
+            entry.reject(err);
+        }
+        this.pending.clear();
+    }
+
+    request(method, params) {
+        if (this.dead) return Promise.reject(new Error('server dead'));
+        const id = this.nextId++;
+        const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.pending.delete(id);
+                reject(new Error(`LSP request timeout: ${method}`));
+            }, REQUEST_TIMEOUT_MS);
+            this.pending.set(id, { resolve, reject, timer });
+            this.send(body);
+        });
+    }
+
+    notify(method, params) {
+        if (this.dead) return;
+        this.send(JSON.stringify({ jsonrpc: '2.0', method, params }));
+    }
+
+    send(body) {
+        this.child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+    }
+}
+
+// LSP CompletionItemKind 数值 → vscode 枚举
+const LSP_KIND = {
+    1: vscode.CompletionItemKind.Text,
+    2: vscode.CompletionItemKind.Method,
+    3: vscode.CompletionItemKind.Function,
+    5: vscode.CompletionItemKind.Field,
+    6: vscode.CompletionItemKind.Variable,
+    7: vscode.CompletionItemKind.Class,
+    8: vscode.CompletionItemKind.Interface,
+    14: vscode.CompletionItemKind.Keyword,
+    21: vscode.CompletionItemKind.Constant,
+    22: vscode.CompletionItemKind.Struct,
+};
+
+function mapCompletionItem(item) {
+    const mapped = new vscode.CompletionItem(item.label, LSP_KIND[item.kind] || vscode.CompletionItemKind.Text);
+    if (item.detail) mapped.detail = item.detail;
+    if (item.documentation) {
+        mapped.documentation = new vscode.MarkdownString(
+            typeof item.documentation === 'string'
+                ? item.documentation
+                : item.documentation.value
+        );
+    }
+    return mapped;
 }
 
 // ============ 运行当前文件 ============
@@ -173,8 +337,91 @@ function runFile() {
     });
 }
 
+// ============ 激活 ============
+
+let client = null;
+
+function docParams(document) {
+    return { uri: document.uri.toString() };
+}
+
 function activate(context) {
+    const outputChannel = vscode.window.createOutputChannel('Tyto LSP');
+
+    // 启动语言服务器：tyto.serverPath 配置可覆盖（默认 PATH 上的 tyto）
+    const serverPath = vscode.workspace.getConfiguration('tyto').get('serverPath') || 'tyto';
+    client = new LspClient(serverPath, outputChannel);
+
+    // 文档同步（全量）
+    const sync = (document) => {
+        if (!client || client.dead || document.languageId !== 'tyto' || !client.ready) return;
+        client.notify('textDocument/didOpen', {
+            textDocument: {
+                uri: document.uri.toString(),
+                languageId: 'tyto',
+                version: document.version,
+                text: document.getText(),
+            },
+        });
+    };
+    if (vscode.window.activeTextEditor) {
+        sync(vscode.window.activeTextEditor.document);
+    }
     context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument(sync),
+        vscode.workspace.onDidChangeTextDocument((e) => {
+            if (!client || client.dead || !client.ready) return;
+            if (e.document.languageId !== 'tyto') return;
+            client.notify('textDocument/didChange', {
+                textDocument: { uri: e.document.uri.toString(), version: e.document.version },
+                contentChanges: [{ text: e.document.getText() }],
+            });
+        }),
+        vscode.workspace.onDidCloseTextDocument((doc) => {
+            if (!client || client.dead || !client.ready) return;
+            if (doc.languageId !== 'tyto') return;
+            client.notify('textDocument/didClose', { textDocument: { uri: doc.uri.toString() } });
+        })
+    );
+
+    // 补全：服务器可用 → 转发；否则静态降级
+    const provideCompletionItems = async (document, position) => {
+        if (client && client.ready && !client.dead) {
+            try {
+                const result = await client.request('textDocument/completion', {
+                    textDocument: { uri: document.uri.toString() },
+                    position: { line: position.line, character: position.character },
+                });
+                const items = result && result.items ? result.items : result || [];
+                return items.map(mapCompletionItem);
+            } catch {
+                // 超时/出错：落到静态降级
+            }
+        }
+        return staticCompletion(document, position);
+    };
+
+    // 悬停：同上
+    const provideHover = async (document, position) => {
+        if (client && client.ready && !client.dead) {
+            try {
+                const result = await client.request('textDocument/hover', {
+                    textDocument: { uri: document.uri.toString() },
+                    position: { line: position.line, character: position.character },
+                });
+                if (result && result.contents && result.contents.value) {
+                    return new vscode.Hover(result.contents.value);
+                }
+                return null;
+            } catch {
+                // 落到静态降级
+            }
+        }
+        return staticHover(document, position);
+    };
+
+    context.subscriptions.push(
+        outputChannel,
         vscode.languages.registerCompletionItemProvider(
             'tyto',
             { provideCompletionItems },
@@ -185,6 +432,16 @@ function activate(context) {
     );
 }
 
-function deactivate() {}
+function deactivate() {
+    if (client && !client.dead) {
+        try {
+            client.notify('shutdown', null);
+            client.notify('exit', null);
+        } catch {
+            // 进程已死则忽略
+        }
+    }
+}
 
-module.exports = { activate, deactivate };
+// 供脚本测试使用（scripts/lsp_client_test.js 用真实 tyto 二进制端到端驱动）
+module.exports = { activate, deactivate, __test: { LspClient, mapCompletionItem } };
