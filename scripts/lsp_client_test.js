@@ -23,6 +23,22 @@ const stub = {
     Hover: class {
         constructor(v) { this.contents = v; }
     },
+    Location: class {
+        constructor(uri, range) { this.uri = uri; this.range = range; }
+    },
+    Position: class {
+        constructor(line, character) { this.line = line; this.character = character; }
+    },
+    Range: class {
+        constructor(start, end) { this.start = start; this.end = end; }
+    },
+    Uri: { parse: (s) => s },
+    SemanticTokens: class {
+        constructor(data) { this.data = data; }
+    },
+    SemanticTokensLegend: class {
+        constructor(tokenTypes) { this.tokenTypes = tokenTypes; }
+    },
     window: {
         createOutputChannel: () => ({
             appendLine() {},
@@ -42,6 +58,8 @@ const stub = {
     languages: {
         registerCompletionItemProvider() {},
         registerHoverProvider() {},
+        registerDefinitionProvider() {},
+        registerDocumentSemanticTokensProvider() {},
     },
     commands: { registerCommand() {} },
 };
@@ -55,6 +73,21 @@ const { __test } = require(path.join(__dirname, '..', 'editors', 'vscode', 'exte
 const { LspClient, mapCompletionItem } = __test;
 
 const BIN = process.argv[2] || path.join(__dirname, '..', 'target', 'debug', 'tyto');
+
+const TOKEN_TYPES = ['variable', 'parameter', 'function', 'method', 'property',
+    'struct', 'interface', 'class', 'namespace'];
+
+function decodeDeltas(data) {
+    const toks = [];
+    let line = 0, col = 0;
+    for (let i = 0; i + 4 < data.length; i += 5) {
+        const [dline, dcol, , ty] = data.slice(i, i + 5);
+        if (dline === 0) col += dcol;
+        else { line += dline; col = dcol; }
+        toks.push([line, col, TOKEN_TYPES[ty]]);
+    }
+    return toks;
+}
 let failures = 0;
 const check = (cond, label) => {
     console.log(`[${cond ? 'ok ' : 'FAIL'}] ${label}`);
@@ -99,6 +132,24 @@ async function main() {
         textDocument: { uri }, position: { line: 0, character: 1 },
     });
     check(r && r.contents && r.contents.value.includes('number'), '悬停返回 markdown');
+
+    // 跳转定义：变量 → 声明处 Location
+    r = await client.request('textDocument/definition', {
+        textDocument: { uri }, position: { line: 0, character: 1 },
+    });
+    check(r && r.uri === uri && r.range.start.line === 0 && r.range.start.character === 0,
+        '跳转定义返回 Location');
+
+    // 语义着色：capabilities legend + 增量数据
+    const legend = client.serverCapabilities.semanticTokensProvider.legend.tokenTypes;
+    check(Array.isArray(legend) && legend.includes('variable') && legend.includes('method'),
+        'serverCapabilities 带 semanticTokens legend');
+    r = await client.request('textDocument/semanticTokens/full', {
+        textDocument: { uri },
+    });
+    const toks = decodeDeltas(r.data);
+    check(toks.some((t) => t[2] === 'variable'), '语义 token 含 variable');
+    check(toks.some((t) => t[2] === 'parameter'), '语义 token 含 parameter（a 的声明）');
 
     // 关停
     await client.request('shutdown', null);

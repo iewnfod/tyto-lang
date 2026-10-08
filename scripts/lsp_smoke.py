@@ -16,6 +16,9 @@ import os
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "target", "debug", "tyto")
 
+TOKEN_TYPES = ["variable", "parameter", "function", "method", "property",
+               "struct", "interface", "class", "namespace"]
+
 DOC_MEMBER = 's = "hello"\nm = new Map()\nobj = {\n    n: 1,\n}\np = new Point(1, 2)\nstruct Point {\n    x,\n    y,\n}\nimpl Point {\n    function len() -> number {\n        return 1\n    }\n}\nq = s.'
 
 failures = []
@@ -71,6 +74,21 @@ class Client:
 
 def uri_of(name):
     return f"file:///tmp/{name}.tyto"
+
+
+def decode_deltas(data):
+    """LSP 相对增量 → [(line, col, len, type_name)]"""
+    toks = []
+    line = col = 0
+    for i in range(0, len(data), 5):
+        dline, dcol, length, ty, _ = data[i:i + 5]
+        if dline == 0:
+            col += dcol  # 同行：相对增量
+        else:
+            line += dline
+            col = dcol  # 跨行：绝对列
+        toks.append((line, col, length, TOKEN_TYPES[ty]))
+    return toks
 
 
 def main():
@@ -141,9 +159,37 @@ def main():
     check(items == [], "didClose 后文档无补全")
 
     # ---- 未知方法 → MethodNotFound，但不死 ----
-    rid = c.send("textDocument/definition", {"textDocument": {"uri": uri_of("m2")}, "position": {"line": 0, "character": 0}})
+    rid = c.send("textDocument/rename", {"textDocument": {"uri": uri_of("m2")}, "position": {"line": 0, "character": 0}, "newName": "zzz"})
     resp = c.wait_response(rid)
     check("error" in resp, "未知方法返回错误响应")
+
+    # ---- 跳转定义：变量 → 声明处 range ----
+    rid = c.send("textDocument/definition", {"textDocument": {"uri": uri_of("m2")}, "position": {"line": 0, "character": 1}})
+    result = c.wait_response(rid)["result"]
+    check(result and result["uri"] == uri_of("m2"), "定义：返回同文档 Location")
+    check(result["range"]["start"] == {"line": 0, "character": 0}, "定义：n → (0,0)")
+
+    # ---- 跳转定义：函数 → 声明名 ----
+    rid = c.send("textDocument/definition", {"textDocument": {"uri": uri_of("m2")}, "position": {"line": 1, "character": 10}})
+    result = c.wait_response(rid)["result"]
+    check(result["range"]["start"] == {"line": 1, "character": 9}, "定义：add → 声明名")
+
+    # ---- 跳转定义：内置类型标注词 → null（无源码位置）----
+    rid = c.send("textDocument/definition", {"textDocument": {"uri": uri_of("m2")}, "position": {"line": 1, "character": 17}})
+    result = c.wait_response(rid)["result"]
+    check(result is None, "定义：标注类型词返回 null")
+
+    # ---- 语义着色：capabilities legend + 增量数据解码 ----
+    doc4 = "n = 42\ns = \"x\"\nu = s.to_uppercase()\n"
+    c.send("textDocument/didOpen", notification=True, params={"textDocument": {"uri": uri_of("m4"), "languageId": "tyto", "version": 1, "text": doc4}})
+    rid = c.send("textDocument/semanticTokens/full", {"textDocument": {"uri": uri_of("m4")}})
+    data = c.wait_response(rid)["result"]["data"]
+    toks = decode_deltas(data)
+    check(any(t == (0, 0, 1, "variable") for t in toks), "着色：n 是 variable")
+    check(any(t == (2, 4, 1, "variable") for t in toks), "着色：s 引用是 variable")
+    check(any(t == (2, 6, 12, "method") for t in toks), "着色：to_uppercase 是 method")
+    check(any(t == (1, 0, 1, "variable") for t in toks), "着色：s 声明是 variable")
+    check(not any(t[0] == 1 and t[1] >= 4 for t in toks), "着色：字符串字面量不发 token")
 
     # ---- shutdown / exit ----
     rid = c.send("shutdown", None)

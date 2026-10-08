@@ -365,8 +365,9 @@ pub fn function_return(params: &[Param], body: &Stmt, ctx: &Ctx) -> Option<Ty> {
                 detail: format!("{}: {}", p.name, ty.display()),
                 name: p.name.clone(),
                 ty,
-                kind: super::ItemKind::Variable,
+                kind: super::ItemKind::Parameter,
                 doc: "参数".into(),
+                span: crate::Span::default(),
             },
         );
     }

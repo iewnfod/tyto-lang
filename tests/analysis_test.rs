@@ -186,6 +186,31 @@ fn member_completion_partial_word_after_dot() {
     let items = complete_at("struct P {\n    x,\n}\np = new P()\np.x = 1\np.ab§");
     assert!(find(&items, "x").is_some(), "struct 字段应补全");
 }
+
+// ============ 赋值目标 / 条件头里的成员补全 ============
+
+#[test]
+fn member_completion_in_assignment_target() {
+    // `self.n += 1` 正在输入：光标在 self. 后（目标表达式里）
+    let items = complete_at(
+        "counter = {\n    n: 0,\n    inc: function() {\n        self.§ += 1\n    },\n}\n",
+    );
+    assert!(find(&items, "n").is_some(), "赋值目标 self. 应补出字段");
+    assert!(find(&items, "inc").is_some(), "赋值目标 self. 应补出方法字段");
+}
+
+#[test]
+fn member_completion_in_condition_headers() {
+    // if / while 条件头、for-in 迭代目标（块还没写）
+    let items = complete_at("s = \"abc\"\nif s.§\n");
+    assert!(find(&items, "to_uppercase").is_some(), "if 条件头 string 方法");
+
+    let items = complete_at("s = \"abc\"\nwhile s.§\n");
+    assert!(find(&items, "len").is_some(), "while 条件头 string 方法");
+
+    let items = complete_at("s = \"abc\"\nfor c in s.§\n");
+    assert!(find(&items, "split").is_some(), "for 迭代目标 string 方法");
+}
 // ============ struct / 对象字面量成员 ============
 
 #[test]

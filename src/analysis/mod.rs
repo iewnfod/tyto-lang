@@ -8,6 +8,7 @@
 pub mod builtins;
 pub mod infer;
 pub mod scope;
+pub mod semantics;
 pub mod tolerate;
 
 use infer::Ty;
@@ -22,6 +23,8 @@ pub enum ItemKind {
     Class,
     Constant,
     Variable,
+    /// 函数参数（补全按 Variable 展示，语义着色单列）
+    Parameter,
     Field,
     Method,
     Struct,
@@ -417,7 +420,7 @@ fn builtin_member_info(word: &str) -> Option<HoverInfo> {
 // ============ 光标词提取 ============
 
 /// 光标处标识符（光标可在词内或词尾）
-fn word_at(map: &SourceMap, line0: usize, char_utf16: usize) -> Option<String> {
+pub(crate) fn word_at(map: &SourceMap, line0: usize, char_utf16: usize) -> Option<String> {
     let line = map.line(line0);
     let mut start = char_utf16.min(line.len());
     let mut end = start;
@@ -436,7 +439,7 @@ fn word_at(map: &SourceMap, line0: usize, char_utf16: usize) -> Option<String> {
 }
 
 /// 光标词之前的同行文本（判成员访问用；UTF-16 索引近似——`.`/`?` 均 ASCII）
-fn before_word(map: &SourceMap, line0: usize, char_utf16: usize) -> String {
+pub(crate) fn before_word(map: &SourceMap, line0: usize, char_utf16: usize) -> String {
     let line = map.line(line0);
     let mut i = char_utf16.min(line.len());
     let bytes = line.as_bytes();

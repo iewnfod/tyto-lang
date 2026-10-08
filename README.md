@@ -24,7 +24,7 @@ cargo install --path .        # 先装 tyto（补全/悬停的语言服务器）
 ./editors/vscode/install.sh   # 一键打包并安装
 ```
 
-补全与悬停由 `tyto lsp` 语言服务器提供：变量带推断类型、用户函数完整签名、`.` 后按接收者类型过滤方法、struct 字段/方法与 `self` 感知；服务器不可用时插件自动降级为静态表。详见 [editors/vscode/README.md](editors/vscode/README.md)。
+补全与悬停由 `tyto lsp` 语言服务器提供：变量带推断类型、用户函数完整签名、`.` 后按接收者类型过滤方法、struct 字段/方法与 `self` 感知；另有**语义着色**（变量/函数/类型按推导结果上色）与 **Ctrl+点击跳转定义**（变量/函数/字段/方法/参数/`self`）。服务器不可用时插件自动降级为静态表。详见 [editors/vscode/README.md](editors/vscode/README.md)。
 
 ## v2 方向（部分已实现）
 

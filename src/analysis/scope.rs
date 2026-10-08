@@ -33,6 +33,8 @@ pub struct Binding {
     /// 展示签名：变量 `x: T`、函数完整签名、struct 字段列表
     pub detail: String,
     pub doc: String,
+    /// 声明处名字的位置（跳转定义用；未知为 default）
+    pub span: Span,
 }
 
 /// struct / interface 注册表项
@@ -278,16 +280,23 @@ impl<'a> Walker<'a> {
                     );
                 }
             }
-            Stmt::If { then_block, else_block, .. } => {
+            Stmt::If { cond, then_block, else_block, .. } => {
+                // 条件表达式里可能有哨兵（补全/悬停在条件中）：先走条件
+                if cond.span() <= self.s {
+                    self.walk_expr(cond, scopes);
+                }
                 scopes.push(HashMap::new());
                 self.walk_stmts(top_stmts(then_block), scopes);
-                // else 链没有独立 span：两侧都走，靠 span 门控自然失效的一侧
-                //（分支作用域合并是编辑器近似）
+                // else 链：else-if 的 else_block 是 If 语句而非 Block，走 descend
+                //（Block 分支自己会压作用域；span 门控自然失效的一侧无副作用）
                 if let Some(e) = else_block {
-                    self.walk_stmts(top_stmts(e), scopes);
+                    self.descend(e, scopes);
                 }
             }
-            Stmt::While { body, .. } => {
+            Stmt::While { cond, body, .. } => {
+                if cond.span() <= self.s {
+                    self.walk_expr(cond, scopes);
+                }
                 scopes.push(HashMap::new());
                 self.walk_stmts(top_stmts(body), scopes);
             }
@@ -297,6 +306,10 @@ impl<'a> Walker<'a> {
                     ForIter::Range { .. } => Ty::Number,
                     ForIter::Expr(Expr::Str(..)) => Ty::Str,
                     ForIter::Expr(e) => {
+                        // 迭代目标里可能有哨兵（`for c in s.|`）
+                        if e.span() <= self.s {
+                            self.walk_expr(e, scopes);
+                        }
                         let ctx = Ctx { scopes, structs: self.structs };
                         match infer_expr(e, &ctx) {
                             Ty::Str => Ty::Str,
@@ -312,12 +325,23 @@ impl<'a> Walker<'a> {
                         kind: ItemKind::Variable,
                         detail: format!("{}: {}", var, elem.display()),
                         doc: "循环变量".into(),
+                        // `for x in` / `for x =`：名字在关键字 + 空格之后
+                        span: Span::new(stmt.span().line, stmt.span().col + 4),
                     },
                 );
                 self.walk_stmts(top_stmts(body), scopes);
             }
-            Stmt::ForC { var, init, body, .. } => {
+            Stmt::ForC { var, init, cond, step, body, .. } => {
                 scopes.push(HashMap::new());
+                if init.span() <= self.s {
+                    self.walk_expr(init, scopes);
+                }
+                if let Some(c) = cond.as_ref().filter(|c| c.span() <= self.s) {
+                    self.walk_expr(c, scopes);
+                }
+                if let Some(st) = step {
+                    self.walk_stmt_step(st, scopes);
+                }
                 let ctx = Ctx { scopes, structs: self.structs };
                 let t = infer_expr(init, &ctx);
                 scopes.last_mut().unwrap().insert(
@@ -328,6 +352,7 @@ impl<'a> Walker<'a> {
                         kind: ItemKind::Variable,
                         detail: format!("{}: {}", var, t.display()),
                         doc: "循环变量".into(),
+                        span: Span::new(stmt.span().line, stmt.span().col + 4),
                     },
                 );
                 self.walk_stmts(top_stmts(body), scopes);
@@ -336,10 +361,30 @@ impl<'a> Walker<'a> {
                 scopes.push(HashMap::new());
                 self.walk_stmts(top_stmts(stmt), scopes);
             }
-            // 含函数字面量的普通语句（赋值 / 表达式 / return）：走表达式路径
-            Stmt::Assign { value, .. } => self.walk_expr(value, scopes),
+            // 含函数字面量/哨兵的普通语句：走表达式路径（赋值目标与值都走——
+            // `self.n += 1` 的哨兵可能在目标里）
+            Stmt::Assign { target, value, .. } => {
+                if target.span() <= self.s {
+                    self.walk_expr(target, scopes);
+                }
+                self.walk_expr(value, scopes);
+            }
             Stmt::Expr(e, _) => self.walk_expr(e, scopes),
             Stmt::Return { value: Some(e), .. } => self.walk_expr(e, scopes),
+            _ => {}
+        }
+    }
+
+    /// for-C 步进段是语句（`i += 1`）：其中也可能有哨兵
+    fn walk_stmt_step(&mut self, step: &Stmt, scopes: &mut Vec<HashMap<String, Binding>>) {
+        match step {
+            Stmt::Assign { target, value, .. } => {
+                if target.span() <= self.s {
+                    self.walk_expr(target, scopes);
+                }
+                self.walk_expr(value, scopes);
+            }
+            Stmt::Expr(e, _) => self.walk_expr(e, scopes),
             _ => {}
         }
     }
@@ -367,6 +412,7 @@ impl<'a> Walker<'a> {
                     kind: ItemKind::Variable,
                     detail: format!("self: {}", sname),
                     doc: format!("方法 self（impl {}）", sname),
+                    span: Span::default(),
                 },
             );
         }
@@ -382,8 +428,9 @@ impl<'a> Walker<'a> {
                     detail: format!("{}: {}", p.name, ty.display()),
                     name: p.name.clone(),
                     ty,
-                    kind: ItemKind::Variable,
+                    kind: ItemKind::Parameter,
                     doc: format!("参数（function {}）", name),
+                    span: Span::default(),
                 },
             );
         }
@@ -500,80 +547,6 @@ impl<'a> Walker<'a> {
     /// 由 descend 在光标位于其中时进入）
     fn register(&mut self, stmt: &Stmt, scopes: &mut Vec<HashMap<String, Binding>>) {
         match stmt {
-            Stmt::Assign { target, op, value, ann, .. } => {
-                let Expr::Ident(name, _) = target else {
-                    // 对象字段 / 索引赋值不引入新绑定
-                    return;
-                };
-                let ctx = Ctx { scopes, structs: self.structs };
-                let rhs = infer_expr(value, &ctx);
-                let new_ty = if let Some(a) = ann {
-                    ty_from_annotation(a, self.structs)
-                } else if *op != AssignOp::Set {
-                    match self.chain_find(scopes, name) {
-                        Some(old) => assign_result_ty(*op, &old.ty, &rhs),
-                        None => rhs,
-                    }
-                } else {
-                    rhs
-                };
-                let b = Binding {
-                    name: name.clone(),
-                    ty: new_ty.clone(),
-                    kind: ItemKind::Variable,
-                    detail: format!("{}: {}", name, new_ty.display()),
-                    doc: String::new(),
-                };
-                chain_insert(scopes, name, b);
-            }
-            Stmt::FuncDecl { name, params, ret, body, .. } => {
-                // 返回类型：标注优先，否则从 body 的 return 推导
-                let ret_ty = ret
-                    .as_ref()
-                    .map(|a| ty_from_annotation(a, self.structs))
-                    .or_else(|| infer::function_return(params, body, &Ctx { scopes, structs: self.structs }));
-                chain_insert(
-                    scopes,
-                    name,
-                    Binding {
-                        name: name.clone(),
-                        ty: Ty::Func(ret_ty.map(Box::new)),
-                        kind: ItemKind::Function,
-                        detail: func_sig(name, params, ret.as_ref()),
-                        doc: String::new(),
-                    },
-                );
-            }
-            Stmt::Struct { name, fields, .. } => {
-                chain_insert(
-                    scopes,
-                    name,
-                    Binding {
-                        name: name.clone(),
-                        ty: Ty::StructDef(name.clone()),
-                        kind: ItemKind::Struct,
-                        detail: format!(
-                            "struct {} {{ {} }}",
-                            name,
-                            fields.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
-                        ),
-                        doc: String::new(),
-                    },
-                );
-            }
-            Stmt::Interface { name, methods, .. } => {
-                chain_insert(
-                    scopes,
-                    name,
-                    Binding {
-                        name: name.clone(),
-                        ty: Ty::InterfaceDef(name.clone()),
-                        kind: ItemKind::Interface,
-                        detail: format!("interface {} {{ {} }}", name, methods.join(", ")),
-                        doc: String::new(),
-                    },
-                );
-            }
             // 控制流体内对链上绑定的写入：浅层登记（不进函数体）
             Stmt::If { then_block, else_block, .. } => {
                 self.register_block_shallow(then_block, scopes);
@@ -585,7 +558,7 @@ impl<'a> Walker<'a> {
                 self.register_block_shallow(body, scopes);
             }
             Stmt::Block { .. } => self.register_block_shallow(stmt, scopes),
-            _ => {}
+            leaf => register_leaf(self.structs, leaf, scopes),
         }
     }
 
@@ -618,14 +591,10 @@ impl<'a> Walker<'a> {
             self.register(s, scopes);
         }
     }
-
-    fn chain_find<'b>(&self, scopes: &'b [HashMap<String, Binding>], name: &str) -> Option<&'b Binding> {
-        scopes.iter().rev().find_map(|s| s.get(name))
-    }
 }
 
 /// 链上语义：命中已有绑定 → 更新那一层；否则插入最内层
-fn chain_insert(scopes: &mut [HashMap<String, Binding>], name: &str, binding: Binding) {
+pub(crate) fn chain_insert(scopes: &mut [HashMap<String, Binding>], name: &str, binding: Binding) {
     for scope in scopes.iter_mut().rev() {
         if scope.contains_key(name) {
             scope.insert(name.to_string(), binding);
@@ -633,5 +602,107 @@ fn chain_insert(scopes: &mut [HashMap<String, Binding>], name: &str, binding: Bi
         }
     }
     scopes.last_mut().unwrap().insert(name.to_string(), binding);
+}
+
+fn chain_find<'b>(scopes: &'b [HashMap<String, Binding>], name: &str) -> Option<&'b Binding> {
+    scopes.iter().rev().find_map(|s| s.get(name))
+}
+
+/// 叶子语句（赋值 / 函数声明 / struct / interface）的绑定登记 + 声明位置记录。
+/// 光标走查（scope::Walker）与全文档着色走查（semantics::Highlighter）共用。
+pub(crate) fn register_leaf(
+    structs: &StructRegistry,
+    stmt: &Stmt,
+    scopes: &mut Vec<HashMap<String, Binding>>,
+) {
+    match stmt {
+        Stmt::Assign { target, op, value, ann, span } => {
+            let Expr::Ident(name, tspan) = target else {
+                // 对象字段 / 索引赋值不引入新绑定
+                return;
+            };
+            let ctx = Ctx { scopes, structs };
+            let rhs = infer_expr(value, &ctx);
+            let new_ty = if let Some(a) = ann {
+                ty_from_annotation(a, structs)
+            } else if *op != AssignOp::Set {
+                match chain_find(scopes, name) {
+                    Some(old) => assign_result_ty(*op, &old.ty, &rhs),
+                    None => rhs,
+                }
+            } else {
+                rhs
+            };
+            // 跳转定义指向**首个**声明处：重赋值保留旧 span
+            let dspan = chain_find(scopes, name)
+                .map(|old| old.span)
+                .filter(|s| *s != Span::default())
+                .unwrap_or(*tspan);
+            let b = Binding {
+                name: name.clone(),
+                ty: new_ty.clone(),
+                kind: ItemKind::Variable,
+                detail: format!("{}: {}", name, new_ty.display()),
+                doc: String::new(),
+                // 赋值目标的名字位置：AST 精确
+                span: dspan,
+            };
+            let _ = span;
+            chain_insert(scopes, name, b);
+        }
+        Stmt::FuncDecl { name, params, ret, body, span } => {
+            // 返回类型：标注优先，否则从 body 的 return 推导
+            let ret_ty = ret
+                .as_ref()
+                .map(|a| ty_from_annotation(a, structs))
+                .or_else(|| infer::function_return(params, body, &Ctx { scopes, structs }));
+            chain_insert(
+                scopes,
+                name,
+                Binding {
+                    name: name.clone(),
+                    ty: Ty::Func(ret_ty.map(Box::new)),
+                    kind: ItemKind::Function,
+                    detail: func_sig(name, params, ret.as_ref()),
+                    doc: String::new(),
+                    // `function name`：名字在关键字 + 空格后（len("function ") == 9）
+                    span: Span::new(span.line, span.col + 9),
+                },
+            );
+        }
+        Stmt::Struct { name, fields, span } => {
+            chain_insert(
+                scopes,
+                name,
+                Binding {
+                    name: name.clone(),
+                    ty: Ty::StructDef(name.clone()),
+                    kind: ItemKind::Struct,
+                    detail: format!(
+                        "struct {} {{ {} }}",
+                        name,
+                        fields.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
+                    doc: String::new(),
+                    span: Span::new(span.line, span.col + 7),
+                },
+            );
+        }
+        Stmt::Interface { name, methods, span } => {
+            chain_insert(
+                scopes,
+                name,
+                Binding {
+                    name: name.clone(),
+                    ty: Ty::InterfaceDef(name.clone()),
+                    kind: ItemKind::Interface,
+                    detail: format!("interface {} {{ {} }}", name, methods.join(", ")),
+                    doc: String::new(),
+                    span: Span::new(span.line, span.col + 10),
+                },
+            );
+        }
+        _ => {}
+    }
 }
 

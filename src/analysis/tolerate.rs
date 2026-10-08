@@ -81,6 +81,21 @@ impl<'s> SourceMap<'s> {
         }
         off.min(self.src.len())
     }
+
+    /// Span（1-based 行、字符列）→ LSP 位置（0-based 行、UTF-16 列）；
+    /// 列越界钳到行尾
+    pub fn from_span(&self, span: Span) -> (usize, usize) {
+        let line0 = span.line.saturating_sub(1);
+        let line = self.line(line0);
+        let mut units = 0usize;
+        for (i, c) in line.chars().enumerate() {
+            if i >= span.col.saturating_sub(1) {
+                break;
+            }
+            units += c.len_utf16();
+        }
+        (line0, units)
+    }
 }
 
 /// 补全模式：成员访问（`.` / `?.` 后）或全局
@@ -133,7 +148,7 @@ fn is_separator(kind: &TokenKind) -> bool {
 }
 
 /// 词法 + 容错：裸换行字符串等词法错误时，截到出错行前重试一次
-fn lex_tolerant(src: &str) -> RtResult<LexOutput> {
+pub(crate) fn lex_tolerant(src: &str) -> RtResult<LexOutput> {
     match Lexer::new(src).tokenize() {
         Ok(out) => Ok(out),
         Err(e) => {
@@ -199,12 +214,33 @@ pub struct Patched {
     pub sentinel: Span,
 }
 
-/// 文本 + 闭括号修复后尽力解析；成功要求哨兵在结果 AST 的 token 流中
+/// 文本 + 闭括号修复后尽力解析；成功要求哨兵在结果 AST 的 token 流中。
+/// 三次尝试：原样 / 补闭括号 / 再补 `{}`（if/while/for 条件头尚未写完块的情况）。
 fn try_parse(text: &str) -> Option<Patched> {
     let out = lex_tolerant(text).ok()?;
     let closers = unclosed_closers(&out.tokens);
-    let full = if closers.is_empty() { text.to_string() } else { format!("{text}{closers}") };
-    let out = Lexer::new(&full).tokenize().ok()?;
+    if closers.is_empty() {
+        if let Some(p) = parse_sentinelled(text) {
+            return Some(p);
+        }
+    } else {
+        let with_closers = format!("{text}{closers}");
+        if let Some(p) = parse_sentinelled(&with_closers) {
+            return Some(p);
+        }
+    }
+    // 块头补全：`if s.__tyto_cx__`（`{` 还没写）→ 追加空块
+    let with_closers = unclosed_closers(&out.tokens);
+    let mut with_block = format!("{text}{with_closers}{{\n}}");
+    if let Some(p) = parse_sentinelled(&with_block) {
+        return Some(p);
+    }
+    with_block = format!("{text}{{\n}}{with_closers}");
+    parse_sentinelled(&with_block)
+}
+
+fn parse_sentinelled(text: &str) -> Option<Patched> {
+    let out = Lexer::new(text).tokenize().ok()?;
     let sentinel = sentinel_token_index(&out.tokens).map(|i| out.tokens[i].span)?;
     let program = Parser::new(out.tokens).parse_program().ok()?;
     Some(Patched { program, sentinel })

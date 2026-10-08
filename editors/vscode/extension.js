@@ -201,7 +201,8 @@ class LspClient {
             processId: process.pid,
             rootUri: null,
             capabilities: {},
-        }).then(() => {
+        }).then((result) => {
+            this.serverCapabilities = (result && result.capabilities) || {};
             this.notify('initialized', {});
             this.ready = true;
             this.outputChannel.appendLine(`语言服务器已就绪（${this.child.spawnargs.join(' ')}）`);
@@ -420,6 +421,66 @@ function activate(context) {
         return staticHover(document, position);
     };
 
+    // 跳转定义（Ctrl+点击）：无静态降级，服务不可用返回 null
+    const provideDefinition = async (document, position) => {
+        if (!client || !client.ready || client.dead) return null;
+        try {
+            const result = await client.request('textDocument/definition', {
+                textDocument: { uri: document.uri.toString() },
+                position: { line: position.line, character: position.character },
+            });
+            if (result && result.uri) {
+                const { start, end } = result.range;
+                return new vscode.Location(
+                    vscode.Uri.parse(result.uri),
+                    new vscode.Range(
+                        new vscode.Position(start.line, start.character),
+                        new vscode.Position(end.line, end.character)
+                    )
+                );
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    };
+
+    // 语义着色：等握手完成后注册（legend 从服务端 capabilities 读取，缺失用内置表）
+    const SEMANTIC_LEGEND = [
+        'variable', 'parameter', 'function', 'method', 'property',
+        'struct', 'interface', 'class', 'namespace',
+    ];
+    const provideDocumentSemanticTokens = async (document) => {
+        if (!client || !client.ready || client.dead) {
+            return new vscode.SemanticTokens(new Uint32Array(0));
+        }
+        try {
+            const result = await client.request('textDocument/semanticTokens/full', {
+                textDocument: { uri: document.uri.toString() },
+            });
+            const data = (result && result.data) || [];
+            return new vscode.SemanticTokens(new Uint32Array(data));
+        } catch {
+            return new vscode.SemanticTokens(new Uint32Array(0));
+        }
+    };
+    client.initPromise.then(() => {
+        if (client.dead) return; // 服务没起来：不注册，保持 TextMate 着色
+        const legendTypes =
+            (client.serverCapabilities &&
+                client.serverCapabilities.semanticTokensProvider &&
+                client.serverCapabilities.semanticTokensProvider.legend &&
+                client.serverCapabilities.semanticTokensProvider.legend.tokenTypes) ||
+            SEMANTIC_LEGEND;
+        context.subscriptions.push(
+            vscode.languages.registerDocumentSemanticTokensProvider(
+                'tyto',
+                { provideDocumentSemanticTokens },
+                new vscode.SemanticTokensLegend(legendTypes)
+            )
+        );
+    });
+
     context.subscriptions.push(
         outputChannel,
         vscode.languages.registerCompletionItemProvider(
@@ -428,6 +489,7 @@ function activate(context) {
             '.'
         ),
         vscode.languages.registerHoverProvider('tyto', { provideHover }),
+        vscode.languages.registerDefinitionProvider('tyto', { provideDefinition }),
         vscode.commands.registerCommand('tyto.runFile', runFile)
     );
 }

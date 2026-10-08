@@ -22,8 +22,9 @@ use crate::analysis::{self, CompleteItem, ItemKind};
 pub fn run() -> ! {
     let (connection, io_threads) = Connection::stdio();
 
-    // capabilities：全量同步 + 补全（`.` 触发）+ 悬停
+    // capabilities：全量同步 + 补全（`.` 触发）+ 悬停 + 跳转定义 + 语义着色
     //（lsp-server 的 initialize 会自动包一层 "capabilities"，这里只给内层）
+    let semantic_types: Vec<&str> = crate::analysis::semantics::TOKEN_TYPES.to_vec();
     let capabilities = json!({
         "textDocumentSync": 1, // FULL
         "completionProvider": {
@@ -31,6 +32,15 @@ pub fn run() -> ! {
             "resolveProvider": false,
         },
         "hoverProvider": true,
+        "definitionProvider": true,
+        "semanticTokensProvider": {
+            "legend": {
+                "tokenTypes": semantic_types,
+                "tokenModifiers": [],
+            },
+            "full": true,
+            "range": false,
+        },
     });
     let init_params = match connection.initialize(capabilities) {
         Ok(p) => p,
@@ -88,6 +98,8 @@ fn handle_request(state: &mut ServerState, req: Request) -> Response {
     match req.method.as_str() {
         "textDocument/completion" => completion(state, &req),
         "textDocument/hover" => hover(state, &req),
+        "textDocument/definition" => definition(state, &req),
+        "textDocument/semanticTokens/full" => semantic_tokens_full(state, &req),
         _ => Response::new_err(
             req.id,
             lsp_server::ErrorCode::MethodNotFound as i32,
@@ -170,7 +182,7 @@ fn completion_json(item: &CompleteItem) -> Value {
         ItemKind::Function => 3,
         ItemKind::Class => 7,
         ItemKind::Constant => 21,
-        ItemKind::Variable => 6,
+        ItemKind::Variable | ItemKind::Parameter => 6,
         ItemKind::Field => 5,
         ItemKind::Method => 2,
         ItemKind::Struct => 22,
@@ -202,6 +214,53 @@ fn hover(state: &ServerState, req: &Request) -> Response {
         json!({ "contents": { "kind": "markdown", "value": md } })
     });
     Response::new_ok(req.id.clone(), result.unwrap_or(Value::Null))
+}
+
+/// 跳转定义：Location { uri, range }（uri 沿用请求的文档）
+fn definition(state: &ServerState, req: &Request) -> Response {
+    let Some((uri, line, character)) = position(&req.params) else {
+        return Response::new_err(req.id.clone(), 0, "bad params".into());
+    };
+    let Some(text) = state.docs.get(&uri) else {
+        return Response::new_ok(req.id.clone(), Value::Null);
+    };
+    let result = analysis::semantics::definition(text, line, character).map(|d| {
+        json!({
+            "uri": uri,
+            "range": {
+                "start": { "line": d.line, "character": d.col },
+                "end": { "line": d.line, "character": d.col + d.len },
+            }
+        })
+    });
+    Response::new_ok(req.id.clone(), result.unwrap_or(Value::Null))
+}
+
+/// 语义着色（全量）：LSP 相对增量编码（deltaLine/deltaStartChar/length/type/modifiers）
+fn semantic_tokens_full(state: &ServerState, req: &Request) -> Response {
+    // 该请求不带 position，只读 uri
+    let Some(uri) = req.params.pointer("/textDocument/uri").and_then(Value::as_str) else {
+        return Response::new_err(req.id.clone(), 0, "bad params".into());
+    };
+    let empty = json!({ "data": [] });
+    let Some(text) = state.docs.get(uri) else {
+        return Response::new_ok(req.id.clone(), empty);
+    };
+    let toks = analysis::semantics::semantic_tokens(text);
+    let mut data: Vec<u32> = Vec::with_capacity(toks.len() * 5);
+    let mut prev_line = 0u32;
+    let mut prev_col = 0u32;
+    for t in &toks {
+        let line = t.line as u32;
+        let col = t.col as u32;
+        let dline = line - prev_line;
+        let dcol = if dline == 0 { col - prev_col } else { col };
+        data.extend_from_slice(&[dline, dcol, t.len as u32, t.ty, 0]);
+        prev_line = line;
+        prev_col = col;
+    }
+    log_line(&format!("semanticTokens {} → {} tokens", uri, toks.len()));
+    Response::new_ok(req.id.clone(), json!({ "data": data }))
 }
 
 /// 可选日志：TYTO_LSP_LOG=文件路径 时追加（调试用，绝不写 stdout）
