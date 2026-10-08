@@ -77,7 +77,11 @@
                 },
                 {
                     "name": "storage.type.tyto",
-                    "match": "\\b(function|new)\\b"
+                    "match": "\\b(function|new|struct|impl|interface)\\b"
+                },
+                {
+                    "name": "keyword.operator.expression.tyto",
+                    "match": "\\bis\\b"
                 },
                 {
                     "name": "constant.language.tyto",
@@ -103,7 +107,7 @@
         },
         "operators": {
             "name": "keyword.operator.tyto",
-            "match": "\\.\\.=|\\.\\.|\\?\\?=|\\?\\?|\\?\\.|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|%=|[-+*/%<>=!?:,.]"
+            "match": "->|\\.\\.=|\\.\\.|\\?\\?=|\\?\\?|\\?\\.|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|%=|[-+*/%<>=!?:,.]"
         }
     }
 }

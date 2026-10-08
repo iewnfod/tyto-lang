@@ -56,5 +56,35 @@
             "}"
         ],
         "description": "带 self 方法的对象"
+    },
+    "struct": {
+        "prefix": "st",
+        "body": ["struct ${1:Name} {", "    $2", "}"],
+        "description": "struct 声明"
+    },
+    "struct with impl": {
+        "prefix": "sti",
+        "body": [
+            "struct ${1:Name} {",
+            "    ${2:fields}",
+            "}",
+            "",
+            "impl $1 {",
+            "    function new($3) {",
+            "        $0",
+            "    }",
+            "}"
+        ],
+        "description": "struct + impl(new 构造)"
+    },
+    "impl": {
+        "prefix": "impl",
+        "body": ["impl ${1:Name} {", "    function ${2:method}($3) {", "        $0", "    }", "}"],
+        "description": "impl 方法块"
+    },
+    "interface": {
+        "prefix": "iface",
+        "body": ["interface ${1:Name} {", "    function ${2:method}()", "}"],
+        "description": "interface 声明"
     }
 }

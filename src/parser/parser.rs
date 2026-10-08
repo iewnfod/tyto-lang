@@ -65,6 +65,9 @@ impl Parser {
                 self.advance();
                 Ok(Stmt::Continue(span))
             }
+            Some(TokenKind::Keyword(Keyword::Struct)) => self.parse_struct(span),
+            Some(TokenKind::Keyword(Keyword::Impl)) => self.parse_impl(span),
+            Some(TokenKind::Keyword(Keyword::Interface)) => self.parse_interface(span),
             _ => self.parse_assign_or_expr(span),
         }
     }
@@ -72,6 +75,29 @@ impl Parser {
     /// 表达式 / 赋值语句（`x = 1`、`a[0] += 1`、`p.x = f()`）
     fn parse_assign_or_expr(&mut self, span: Span) -> RtResult<Stmt> {
         let expr = self.parse_expr()?;
+        // `x: T = v`：类型标注赋值（仅普通变量，纯文档性质，运行时不检查）
+        if self.check(&TokenKind::Colon) {
+            let name = match &expr {
+                Expr::Ident(name, _) => name.clone(),
+                _ => {
+                    return Err(RtError::parse(
+                        expr.span(),
+                        "type annotations are only allowed on plain variables",
+                    ))
+                }
+            };
+            self.advance(); // :
+            let ann = self.parse_type()?;
+            self.expect(TokenKind::Assign, "expected '=' after type annotation")?;
+            let value = self.parse_expr()?;
+            return Ok(Stmt::Assign {
+                target: Expr::Ident(name, span),
+                op: AssignOp::Set,
+                value,
+                ann: Some(ann),
+                span,
+            });
+        }
         let op = match self.peek_kind() {
             Some(TokenKind::Assign) => AssignOp::Set,
             Some(TokenKind::AddAssign) => AssignOp::Add,
@@ -96,7 +122,7 @@ impl Parser {
             }
         }
         let value = self.parse_expr()?;
-        Ok(Stmt::Assign { target: expr, op, value, span })
+        Ok(Stmt::Assign { target: expr, op, value, ann: None, span })
     }
 
     fn parse_func_decl(&mut self, span: Span) -> RtResult<Stmt> {
@@ -104,19 +130,26 @@ impl Parser {
         let name = self.expect_ident("expected function name after 'function'")?;
         self.expect(TokenKind::LParen, "expected '(' after function name")?;
         let params = self.parse_params()?;
-        self.skip_eol();
+        let ret = self.parse_ret_ann()?;
         let body = Rc::new(self.parse_block()?);
-        Ok(Stmt::FuncDecl { name, params, body, span })
+        Ok(Stmt::FuncDecl { name, params, ret, body, span })
     }
 
-    fn parse_params(&mut self) -> RtResult<Vec<String>> {
+    fn parse_params(&mut self) -> RtResult<Vec<Param>> {
         let mut params = Vec::new();
         if self.check(&TokenKind::RParen) {
             self.advance();
             return Ok(params);
         }
         loop {
-            params.push(self.expect_ident("expected parameter name")?);
+            let name = self.expect_ident("expected parameter name")?;
+            let ty = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            params.push(Param { name, ty });
             if self.check(&TokenKind::Comma) {
                 self.advance();
                 if self.check(&TokenKind::RParen) {
@@ -128,6 +161,159 @@ impl Parser {
         }
         self.expect(TokenKind::RParen, "expected ')' after parameters")?;
         Ok(params)
+    }
+
+    // ============ 类型标注（纯文档性质，运行时不检查） ============
+
+    /// 类型语法：`Ident`，可带泛型参数 `Map<string, number>`，可叠加 `[]` 后缀（`number[]`）。
+    /// 返回规范字符串，原样存入 AST。
+    fn parse_type(&mut self) -> RtResult<String> {
+        let mut ty = self.expect_ident("expected type name")?;
+        if self.check(&TokenKind::Lt) {
+            self.advance();
+            ty.push('<');
+            loop {
+                ty.push_str(&self.parse_type()?);
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    ty.push_str(", ");
+                } else {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt, "expected '>' to close generic arguments")?;
+            ty.push('>');
+        }
+        while self.check(&TokenKind::LBracket) {
+            self.advance();
+            self.expect(TokenKind::RBracket, "expected ']' after '[' in type")?;
+            ty.push_str("[]");
+        }
+        Ok(ty)
+    }
+
+    /// `)` 之后可选的返回类型标注：`-> T`（`->` 允许出现在换行之后）
+    fn parse_ret_ann(&mut self) -> RtResult<Option<String>> {
+        self.skip_eol();
+        if self.check(&TokenKind::Arrow) {
+            self.advance();
+            let ty = self.parse_type()?;
+            self.skip_eol();
+            Ok(Some(ty))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// `struct Point { x, y, }`：字段名列表，逗号/换行均可作分隔，允许尾逗号
+    fn parse_struct(&mut self, span: Span) -> RtResult<Stmt> {
+        self.advance(); // struct
+        let name = self.expect_ident("expected struct name after 'struct'")?;
+        self.skip_eol();
+        self.expect(TokenKind::LBrace, "expected '{' after struct name")?;
+        let mut fields = Vec::new();
+        loop {
+            self.skip_separators();
+            if self.check(&TokenKind::RBrace) {
+                self.advance();
+                break;
+            }
+            if self.at_end() {
+                return Err(RtError::parse(self.cur_span(), "unclosed '{': unexpected end of input"));
+            }
+            let msg = format!("expected field name in struct `{}`", name);
+            let field = self.expect_ident(&msg)?;
+            // 可选类型标注 `x: number`（纯文档性质）
+            let ty = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            fields.push(Param { name: field, ty });
+            // 逗号可选：换行分隔（`x\ny`）同样合法，分隔符在循环顶部跳过
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        Ok(Stmt::Struct { name, fields, span })
+    }
+
+    /// `impl Point { function new(...) { } ... }`：方法序列，复用函数声明语法
+    fn parse_impl(&mut self, span: Span) -> RtResult<Stmt> {
+        self.advance(); // impl
+        let target = self.expect_ident("expected struct name after 'impl'")?;
+        self.skip_eol();
+        self.expect(TokenKind::LBrace, "expected '{' after struct name")?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_separators();
+            if self.check(&TokenKind::RBrace) {
+                self.advance();
+                break;
+            }
+            if self.at_end() {
+                return Err(RtError::parse(self.cur_span(), "unclosed '{': unexpected end of input"));
+            }
+            if !self.check(&TokenKind::Keyword(Keyword::Function)) {
+                return Err(RtError::parse(
+                    self.cur_span(),
+                    format!(
+                        "impl body may only contain `function` declarations, found {}",
+                        self.describe_peek()
+                    ),
+                ));
+            }
+            let mspan = self.cur_span();
+            self.advance(); // function
+            let name = self.expect_method_name()?;
+            self.expect(TokenKind::LParen, "expected '(' after method name")?;
+            let params = self.parse_params()?;
+            let ret = self.parse_ret_ann()?;
+            let body = Rc::new(self.parse_block()?);
+            methods.push(Stmt::FuncDecl { name, params, ret, body, span: mspan });
+        }
+        Ok(Stmt::Impl { target, methods, span })
+    }
+
+    /// `interface Shape { function area() ... }`：方法签名（无函数体），逗号/换行分隔
+    fn parse_interface(&mut self, span: Span) -> RtResult<Stmt> {
+        self.advance(); // interface
+        let name = self.expect_ident("expected interface name after 'interface'")?;
+        self.skip_eol();
+        self.expect(TokenKind::LBrace, "expected '{' after interface name")?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_separators();
+            if self.check(&TokenKind::RBrace) {
+                self.advance();
+                break;
+            }
+            if self.at_end() {
+                return Err(RtError::parse(self.cur_span(), "unclosed '{': unexpected end of input"));
+            }
+            self.expect(
+                TokenKind::Keyword(Keyword::Function),
+                "expected 'function' in interface body",
+            )?;
+            let msg = format!("expected method name in interface `{}`", name);
+            let mname = self.expect_ident(&msg)?;
+            self.expect(TokenKind::LParen, "expected '(' after interface method name")?;
+            // 参数与返回类型标注解析后即丢弃（interface 只保留方法名契约）
+            let _params = self.parse_params()?;
+            let _ret = self.parse_ret_ann()?;
+            if self.check(&TokenKind::LBrace) {
+                return Err(RtError::parse(
+                    self.cur_span(),
+                    "interface methods cannot have bodies",
+                ));
+            }
+            methods.push(mname);
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        Ok(Stmt::Interface { name, methods, span })
     }
 
     fn parse_if(&mut self, span: Span) -> RtResult<Stmt> {
@@ -319,15 +505,29 @@ impl Parser {
     fn parse_equality(&mut self) -> RtResult<Expr> {
         let mut left = self.parse_comparison()?;
         loop {
-            let op = match self.peek_kind() {
-                Some(TokenKind::Eq) => BinaryOp::Eq,
-                Some(TokenKind::Neq) => BinaryOp::Neq,
+            match self.peek_kind() {
+                Some(TokenKind::Eq) | Some(TokenKind::Neq) => {
+                    let op = match self.advance().kind {
+                        TokenKind::Eq => BinaryOp::Eq,
+                        _ => BinaryOp::Neq,
+                    };
+                    let right = self.parse_comparison()?;
+                    let span = left.span();
+                    left = Expr::Binary { left: Box::new(left), op, right: Box::new(right), span };
+                }
+                // `p is T`：与 == 同级、左结合；右侧是类型名表达式（标识符/成员链）
+                Some(TokenKind::Keyword(Keyword::Is)) => {
+                    self.advance();
+                    let target = self.parse_unary()?;
+                    let span = left.span();
+                    left = Expr::Is {
+                        operand: Box::new(left),
+                        target: Box::new(target),
+                        span,
+                    };
+                }
                 _ => return Ok(left),
-            };
-            self.advance();
-            let right = self.parse_comparison()?;
-            let span = left.span();
-            left = Expr::Binary { left: Box::new(left), op, right: Box::new(right), span };
+            }
         }
     }
 
@@ -498,9 +698,9 @@ impl Parser {
                 self.advance();
                 self.expect(TokenKind::LParen, "expected '(' after 'function'")?;
                 let params = self.parse_params()?;
-                self.skip_eol();
+                let ret = self.parse_ret_ann()?;
                 let body = Rc::new(self.parse_block()?);
-                Ok(Expr::Function { params, body, span })
+                Ok(Expr::Function { params, ret, body, span })
             }
             Some(TokenKind::LParen) => {
                 self.advance();
@@ -606,10 +806,27 @@ impl Parser {
 
     // ============ 工具方法 ============
 
+    /// impl 方法名：标识符，或关键字 `new`（构造方法约定名）
+    fn expect_method_name(&mut self) -> RtResult<String> {
+        match self.peek_kind().cloned() {
+            Some(TokenKind::Ident(name)) => {
+                self.advance();
+                Ok(name)
+            }
+            Some(TokenKind::Keyword(Keyword::New)) => {
+                self.advance();
+                Ok("new".to_string())
+            }
+            _ => Err(RtError::parse(
+                self.cur_span(),
+                format!("expected method name, found {}", self.describe_peek()),
+            )),
+        }
+    }
+
     /// 成员名/字段名：标识符或关键字（允许 `arr.contains` 这类与关键字不冲突的名字，
     /// 以及极少数关键字字段名），字符串也可作为对象字面量的键
-    fn expect_member_name(&mut self) -> RtResult<String> {
-        match self.peek_kind().cloned() {
+    fn expect_member_name(&mut self) -> RtResult<String> {        match self.peek_kind().cloned() {
             Some(TokenKind::Ident(name)) => {
                 self.advance();
                 Ok(name)
@@ -754,6 +971,7 @@ fn token_text(kind: &TokenKind) -> &'static str {
         AndAnd => "&&",
         OrOr => "||",
         Not => "!",
+        Arrow => "->",
         Dot => ".",
         DotDot => "..",
         DotDotEq => "..=",
@@ -843,8 +1061,14 @@ mod tests {
                 args: args.into_iter().map(no_span_expr).collect(),
                 span: d,
             },
-            Expr::Function { params, body, .. } => Expr::Function {
+            Expr::Is { operand, target, .. } => Expr::Is {
+                operand: Box::new(no_span_expr(*operand)),
+                target: Box::new(no_span_expr(*target)),
+                span: d,
+            },
+            Expr::Function { params, ret, body, .. } => Expr::Function {
                 params,
+                ret,
                 body: Rc::new(no_span_stmt((*body).clone())),
                 span: d,
             },
@@ -855,10 +1079,11 @@ mod tests {
         let d = Span::default();
         match s {
             Stmt::Expr(e, _) => Stmt::Expr(no_span_expr(e), d),
-            Stmt::Assign { target, op, value, .. } => Stmt::Assign {
+            Stmt::Assign { target, op, value, ann, .. } => Stmt::Assign {
                 target: no_span_expr(target),
                 op,
                 value: no_span_expr(value),
+                ann,
                 span: d,
             },
             Stmt::If { cond, then_block, else_block, .. } => Stmt::If {
@@ -893,12 +1118,22 @@ mod tests {
                 body: Box::new(no_span_stmt(*body)),
                 span: d,
             },
-            Stmt::FuncDecl { name, params, body, .. } => Stmt::FuncDecl {
+            Stmt::FuncDecl { name, params, ret, body, .. } => Stmt::FuncDecl {
                 name,
                 params,
+                ret,
                 body: Rc::new(no_span_stmt((*body).clone())),
                 span: d,
             },
+            Stmt::Struct { name, fields, .. } => Stmt::Struct { name, fields, span: d },
+            Stmt::Impl { target, methods, .. } => Stmt::Impl {
+                target,
+                methods: methods.into_iter().map(no_span_stmt).collect(),
+                span: d,
+            },
+            Stmt::Interface { name, methods, .. } => {
+                Stmt::Interface { name, methods, span: d }
+            }
             Stmt::Return { value, .. } => Stmt::Return { value: value.map(no_span_expr), span: d },
             Stmt::Break(_) => Stmt::Break(d),
             Stmt::Continue(_) => Stmt::Continue(d),
@@ -1149,7 +1384,11 @@ mod tests {
         let e = expr("function(x, y) { x }");
         match e {
             Expr::Function { params, body, .. } => {
-                assert_eq!(params, vec!["x".to_string(), "y".to_string()]);
+                assert_eq!(
+                    params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+                    vec!["x", "y"]
+                );
+                assert!(params.iter().all(|p| p.ty.is_none()));
                 assert!(matches!(&*body, Stmt::Block { stmts, .. } if stmts.len() == 1));
             }
             other => panic!("expected Function, got {:?}", other),
@@ -1348,5 +1587,258 @@ mod tests {
         };
         let mut p = Parser::new(tokens);
         p.parse_program().is_err()
+    }
+
+    // ============ 类型标注（纯文档性质，运行时不检查） ============
+
+    #[test]
+    fn type_annotation_on_assign() {
+        // x: T = v → Assign { ann: Some(T) }
+        match program("x: number = 1") {
+            Stmt::Block { ref stmts, .. } => match &stmts[0] {
+                Stmt::Assign { target, op, value, ann, .. } => {
+                    assert!(matches!(target, Expr::Ident(..)));
+                    assert!(matches!(op, AssignOp::Set));
+                    assert!(matches!(value, Expr::Num(1.0, _)));
+                    assert_eq!(ann.as_deref(), Some("number"));
+                }
+                other => panic!("expected Assign, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // 泛型参数与 [] 后缀
+        for (src, ty) in [
+            ("m: Map<string, number> = new Map()", "Map<string, number>"),
+            ("a: number[] = []", "number[]"),
+            ("g: Grid<number[][]> = g", "Grid<number[][]>"),
+            ("m: Map<string, number[]> = m", "Map<string, number[]>"),
+        ] {
+            match program(src) {
+                Stmt::Block { stmts, .. } => match &stmts[0] {
+                    Stmt::Assign { ann, .. } => assert_eq!(ann.as_deref(), Some(ty)),
+                    other => panic!("{}: expected Assign, got {:?}", src, other),
+                },
+                other => panic!("expected Block, got {:?}", other),
+            }
+        }
+        // 普通赋值不带标注
+        assert!(matches!(&program("x = 1"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { ann: None, .. })));
+        // 三元/对象字面量的冒号不受影响
+        assert!(matches!(program("y = a ? b : c"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { value: Expr::Ternary { .. }, ann: None, .. })));
+        assert!(matches!(program("o = {x: 1}"), Stmt::Block { stmts, .. }
+            if matches!(&stmts[0], Stmt::Assign { ann: None, .. })));
+    }
+
+    #[test]
+    fn type_annotation_errors() {
+        assert!(program_fails("x: number")); // 缺 '='，纯声明不成句
+        assert!(program_fails("x: = 1")); // 类型名缺失
+        assert!(program_fails("a[0]: number = 1")); // 仅普通变量可标注
+        assert!(program_fails("p.x: number = 1"));
+        assert!(program_fails("1: number = 1"));
+        assert!(program_fails("x: Map<string = 1")); // 泛型未闭合
+        assert!(program_fails("x: number += 1")); // 标注后只允许 '='
+    }
+
+    #[test]
+    fn function_annotations() {
+        match program("function add(a: number, b: number) -> number {\n    return a + b\n}") {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::FuncDecl { name, params, ret, .. } => {
+                    assert_eq!(name, "add");
+                    assert_eq!(params.len(), 2);
+                    assert_eq!(params[0].name, "a");
+                    assert_eq!(params[0].ty.as_deref(), Some("number"));
+                    assert_eq!(params[1].ty.as_deref(), Some("number"));
+                    assert_eq!(ret.as_deref(), Some("number"));
+                }
+                other => panic!("expected FuncDecl, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // 部分参数标注
+        match program("function f(a, b: bool) {}") {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::FuncDecl { params, ret, .. } => {
+                    assert_eq!(params[0].name, "a");
+                    assert!(params[0].ty.is_none());
+                    assert_eq!(params[1].ty.as_deref(), Some("bool"));
+                    assert!(ret.is_none());
+                }
+                other => panic!("expected FuncDecl, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // impl 方法：参数 + 返回类型
+        match program("impl P {\n    function len(self: P) -> number { return 1 }\n}") {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::Impl { methods, .. } => match &methods[0] {
+                    Stmt::FuncDecl { ret, params, .. } => {
+                        assert_eq!(ret.as_deref(), Some("number"));
+                        assert_eq!(params[0].ty.as_deref(), Some("P"));
+                    }
+                    other => panic!("expected FuncDecl, got {:?}", other),
+                },
+                other => panic!("expected Impl, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // 匿名函数
+        match expr("function(x: number) -> number { return x }") {
+            Expr::Function { params, ret, .. } => {
+                assert_eq!(params[0].ty.as_deref(), Some("number"));
+                assert_eq!(ret.as_deref(), Some("number"));
+            }
+            other => panic!("expected Function, got {:?}", other),
+        }
+        // interface 签名：标注接受但丢弃，仍不允许函数体
+        assert!(matches!(
+            program("interface Shape {\n    function area() -> number\n}"),
+            Stmt::Block { stmts, .. }
+                if matches!(&stmts[0], Stmt::Interface { methods, .. } if methods == &vec!["area".to_string()])
+        ));
+        assert!(program_fails("interface Shape {\n    function area() -> number { return 1 }\n}"));
+    }
+
+    #[test]
+    fn struct_field_annotations() {
+        match program("struct Point {\n    x: number,\n    y: number,\n    label: string,\n}") {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::Struct { name, fields, .. } => {
+                    assert_eq!(name, "Point");
+                    assert_eq!(fields.len(), 3);
+                    assert_eq!(fields[0].name, "x");
+                    assert_eq!(fields[0].ty.as_deref(), Some("number"));
+                    assert_eq!(fields[1].ty.as_deref(), Some("number"));
+                    assert_eq!(fields[2].ty.as_deref(), Some("string"));
+                }
+                other => panic!("expected Struct, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+    }
+
+    // ============ struct / impl / interface / is ============
+
+    #[test]
+    fn struct_declaration_forms() {
+        // 逗号分隔 + 尾逗号
+        match program("struct Point {\n    x,\n    y,\n}") {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::Struct { name, fields, .. } => {
+                    assert_eq!(name, "Point");
+                    assert_eq!(
+                        fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+                        vec!["x", "y"]
+                    );
+                    assert!(fields.iter().all(|f| f.ty.is_none()));
+                }
+                other => panic!("expected Struct, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // 换行分隔（无逗号）
+        assert!(matches!(
+            program("struct P {\n    a\n    b\n}"),
+            Stmt::Block { stmts, .. } if matches!(&stmts[0], Stmt::Struct { fields, .. } if fields.len() == 2)
+        ));
+        // 单行 + 空体
+        assert!(matches!(
+            program("struct P { a, b }"),
+            Stmt::Block { stmts, .. } if matches!(&stmts[0], Stmt::Struct { fields, .. } if fields.len() == 2)
+        ));
+        assert!(matches!(
+            program("struct Empty {}"),
+            Stmt::Block { stmts, .. } if matches!(&stmts[0], Stmt::Struct { fields, .. } if fields.is_empty())
+        ));
+    }
+
+    #[test]
+    fn impl_block_methods() {
+        let src = "impl Point {\n    function new(x, y) {\n        self.x = x\n    }\n    function len() {\n        return 1\n    }\n}";
+        match program(src) {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::Impl { target, methods, .. } => {
+                    assert_eq!(target, "Point");
+                    assert_eq!(methods.len(), 2);
+                    assert!(matches!(&methods[0], Stmt::FuncDecl { name, params, .. }
+                        if name == "new" && params.len() == 2));
+                    assert!(matches!(&methods[1], Stmt::FuncDecl { name, .. } if name == "len"));
+                }
+                other => panic!("expected Impl, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interface_signatures() {
+        let src = "interface Shape {\n    function area()\n    function name()\n}";
+        match program(src) {
+            Stmt::Block { stmts, .. } => match &stmts[0] {
+                Stmt::Interface { name, methods, .. } => {
+                    assert_eq!(name, "Shape");
+                    assert_eq!(methods, &vec!["area".to_string(), "name".to_string()]);
+                }
+                other => panic!("expected Interface, got {:?}", other),
+            },
+            other => panic!("expected Block, got {:?}", other),
+        }
+        // 空接口、逗号分隔
+        assert!(matches!(
+            program("interface Nothing {}"),
+            Stmt::Block { stmts, .. } if matches!(&stmts[0], Stmt::Interface { methods, .. } if methods.is_empty())
+        ));
+        assert!(matches!(
+            program("interface A { function f(), function g() }"),
+            Stmt::Block { stmts, .. } if matches!(&stmts[0], Stmt::Interface { methods, .. } if methods.len() == 2)
+        ));
+    }
+
+    #[test]
+    fn is_operator_precedence() {
+        // p is Shape && q → (p is Shape) && q
+        let e = expr("p is Shape && q");
+        match e {
+            Expr::Logic { op: LogicOp::And, left, .. } => {
+                assert!(matches!(*left, Expr::Is { .. }));
+            }
+            other => panic!("expected Logic(And), got {:?}", other),
+        }
+        // p is T == true → (p is T) == true
+        match expr("p is T == true") {
+            Expr::Binary { op: BinaryOp::Eq, left, .. } => {
+                assert!(matches!(*left, Expr::Is { .. }));
+            }
+            other => panic!("expected Binary(Eq), got {:?}", other),
+        }
+        // a is B is C → 左结合链
+        match expr("a is B is C") {
+            Expr::Is { operand, .. } => {
+                assert!(matches!(*operand, Expr::Is { .. }));
+            }
+            other => panic!("expected nested Is, got {:?}", other),
+        }
+        // 右侧是普通标识符/成员链
+        assert!(matches!(expr("p is Shape"), Expr::Is { .. }));
+        assert!(matches!(expr("p is ns.Shape"), Expr::Is { .. }));
+        // is 不再是合法变量名（关键字）
+        assert!(program_fails("is = 1"));
+    }
+
+    #[test]
+    fn struct_impl_interface_errors() {
+        // interface 方法不能带函数体
+        assert!(program_fails("interface A { function f() { return 1 } }"));
+        // impl 体只能包含 function 声明
+        assert!(program_fails("impl P { x = 1 }"));
+        // 缺字段名
+        assert!(program_fails("struct P { , }"));
+        // 未闭合
+        assert!(program_fails("struct P { x"));
+        assert!(program_fails("impl P {"));
+        assert!(program_fails("interface P {"));
     }
 }

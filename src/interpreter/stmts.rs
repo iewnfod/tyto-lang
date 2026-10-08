@@ -1,10 +1,12 @@
 //! 语句执行：execute 及各类语句的落地（赋值 / 分支 / 循环 / 块）
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::ast::{AssignOp, BinaryOp, Expr, ForIter, Stmt};
+use indexmap::IndexMap;
+
+use crate::ast::{AssignOp, BinaryOp, Expr, ForIter, Param, Stmt};
 use crate::scope::{self, Scope};
-use crate::value::FuncObj;
+use crate::value::{FuncObj, InterfaceObj, StructObj};
 use crate::{Flow, Interpreter, RtError, RtResult, Span, Value};
 
 use super::exprs::{fmt_index, index_int};
@@ -18,7 +20,9 @@ impl Interpreter {
                 self.evaluate(expr)?;
                 Ok(Flow::Normal)
             }
-            Stmt::Assign { target, op, value, span } => self.exec_assign(target, *op, value, *span),
+            Stmt::Assign { target, op, value, span, .. } => {
+                self.exec_assign(target, *op, value, *span)
+            }
             Stmt::If { cond, then_block, else_block, .. } => {
                 let c = self.evaluate(cond)?;
                 if c.truthy() {
@@ -35,9 +39,10 @@ impl Interpreter {
                 self.exec_for_c(var, init, cond, step.as_deref(), body)
             }
             Stmt::FuncDecl { name, params, body, .. } => {
+                // 参数的类型标注仅文档性质，FuncObj 只保留参数名
                 let func = Value::Func(Rc::new(FuncObj {
                     name: name.clone(),
-                    params: params.clone(),
+                    params: Param::names(params),
                     body: body.clone(),
                     closure: self.scope.clone(),
                 }));
@@ -55,6 +60,60 @@ impl Interpreter {
             Stmt::Break(_) => Ok(Flow::Break),
             Stmt::Continue(_) => Ok(Flow::Continue),
             Stmt::Block { stmts, .. } => self.exec_block(stmts),
+            Stmt::Struct { name, fields, span } => {
+                // 字段查重：重复声明直接报错（typo 早暴露）；类型标注仅文档性质，这里丢弃
+                let names: Vec<String> = Param::names(fields);
+                let mut seen = std::collections::HashSet::new();
+                for f in &names {
+                    if !seen.insert(f.clone()) {
+                        return Err(RtError::runtime(
+                            Some(*span),
+                            format!("struct `{}` has duplicate field `{}`", name, f),
+                        ));
+                    }
+                }
+                let def = Value::Struct(Rc::new(RefCell::new(StructObj {
+                    name: name.clone(),
+                    fields: names,
+                    methods: IndexMap::new(),
+                })));
+                scope::define(&self.scope, name, def);
+                Ok(Flow::Normal)
+            }
+            Stmt::Impl { target, methods, span } => {
+                let def = scope::get(&self.scope, target).map_err(|e| e.with_span(*span))?;
+                let Value::Struct(def) = def else {
+                    return Err(RtError::runtime(
+                        Some(*span),
+                        format!("impl target `{}` is not a struct", target),
+                    ));
+                };
+                for m in methods {
+                    // parser 保证 impl 体只含 FuncDecl
+                    let Stmt::FuncDecl { name, params, body, .. } = m else { continue };
+                    // 注册名用方法名（p.len() 按名分派），FuncObj.name 用全名（报错友好）
+                    let func = Rc::new(FuncObj {
+                        name: format!("{}::{}", target, name),
+                        params: Param::names(params),
+                        body: body.clone(),
+                        closure: self.scope.clone(),
+                    });
+                    def.borrow_mut().methods.insert(name.clone(), func);
+                }
+                Ok(Flow::Normal)
+            }
+            Stmt::Interface { name, methods, span } => {
+                let _ = span;
+                scope::define(
+                    &self.scope,
+                    name,
+                    Value::Interface(Rc::new(InterfaceObj {
+                        name: name.clone(),
+                        methods: methods.clone(),
+                    })),
+                );
+                Ok(Flow::Normal)
+            }
         }
     }
 
@@ -131,6 +190,18 @@ impl Interpreter {
                 match &recv {
                     Value::Obj(obj) => {
                         obj.borrow_mut().fields.insert(name.clone(), v);
+                        Ok(Flow::Normal)
+                    }
+                    Value::Instance(inst) => {
+                        // struct 字段固定：只允许写已声明字段（不自动创建，typo 早暴露）
+                        let struct_name = inst.borrow().def.borrow().name.clone();
+                        if !inst.borrow().fields.contains_key(name) {
+                            return Err(RtError::runtime(
+                                Some(span),
+                                format!("struct {} has no field `{}`", struct_name, name),
+                            ));
+                        }
+                        inst.borrow_mut().fields.insert(name.clone(), v);
                         Ok(Flow::Normal)
                     }
                     other => Err(RtError::runtime(

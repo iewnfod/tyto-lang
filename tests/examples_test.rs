@@ -42,6 +42,14 @@ fn objects_example() {
 }
 
 #[test]
+fn shapes_example() {
+    assert_eq!(
+        run_file("examples/shapes.tyto"),
+        "Rect 3x4 -> 12\nCircle r=2 -> 12.56636\nobject shape -> 1\ntotal: 25.56636\n5\nfalse true\n"
+    );
+}
+
+#[test]
 fn bfs_example() {
     assert_eq!(
         run_file("examples/bfs.tyto"),

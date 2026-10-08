@@ -1,0 +1,81 @@
+// struct + impl + interface + is：几何形状示例
+//
+// interface 是结构化的：Rect / Circle / 甚至满足方法签名的普通对象，
+// 都无需显式声明"实现了 Shape"，`is` 在运行时按方法集判断。
+
+interface Shape {
+    function area()
+    function describe()
+}
+
+struct Point {
+    x,
+    y,
+}
+
+impl Point {
+    function new(x, y) {
+        self.x = x
+        self.y = y
+    }
+    function len() {
+        return sqrt(self.x * self.x + self.y * self.y)
+    }
+}
+
+struct Rect {
+    w,
+    h,
+    origin,
+}
+
+impl Rect {
+    function new(w, h) {
+        self.w = w
+        self.h = h
+        self.origin = new Point(0, 0)
+    }
+    function area() {
+        return self.w * self.h
+    }
+    function describe() {
+        return "Rect " + self.w + "x" + self.h
+    }
+}
+
+struct Circle {
+    r,
+}
+
+impl Circle {
+    function area() {
+        return 3.14159 * self.r * self.r
+    }
+    function describe() {
+        return "Circle r=" + self.r
+    }
+}
+
+// 异构集合：两个 struct 实例 + 一个恰好满足 Shape 的普通对象
+shapes = [
+    new Rect(3, 4),
+    new Circle(2),
+    {
+        area: function() { return 1 },
+        describe: function() { return "object shape" },
+    },
+]
+
+total = 0
+for s in shapes {
+    if s is Shape {
+        println(s.describe() + " -> " + s.area())
+        total += s.area()
+    }
+}
+println("total: " + total)
+
+// Point 没有 area/describe：不满足 Shape
+p = new Point(3, 4)
+println(p.len())
+println(p is Shape, p is Point)

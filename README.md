@@ -1,4 +1,4 @@
-# Tyto
+# TyTo
 
 **完整语言参考**：[docs/language-reference.md](docs/language-reference.md)——全部语法、语义规则与内置库的详细文档。
 
@@ -27,9 +27,16 @@ code --install-extension tyto-lang-0.0.1.vsix
 
 详见 [editors/vscode/README.md](editors/vscode/README.md)。
 
-## v2 方向（已定设计，未实现）
+## v2 方向（部分已实现）
 
-- `struct` + `impl` 分离定义、单继承（字段+方法+构造链）
-- 结构化 `interface`（纯契约，`is` 运行时检查，`impl for` 声明时早报错）
-- `new T()` = 构造实例 + 自动调用 `T::new()`
+已实现：
+
+- `struct` + `impl` 分离定义（字段固定、方法共享、`new` 构造）
+- 结构化 `interface`（纯契约声明，`is` 运行时按方法集检查）
+- `new T()` = 构造实例 + 自动调用 `T::new()`（无 `new` 方法时按位置初始化字段）
+- 可选类型标注：`x: number = 1`、参数 `a: number`、返回 `-> number`、struct 字段（纯文档性质，运行时不检查）
+
+规划中：
+
+- 单继承（字段+方法+构造链）、`impl for` 声明时早报错
 - 模块导入、字符串插值 `` `sum is ${x}` ``、`match`、BigInt

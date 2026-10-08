@@ -2,10 +2,12 @@
 
 use std::{cell::RefCell, cmp::Reverse, collections::BinaryHeap, rc::Rc};
 
+use indexmap::IndexMap;
+
 use crate::ast::Expr;
 use crate::natives;
 use crate::scope::{self, Scope};
-use crate::value::{FuncObj, HeapVal};
+use crate::value::{FuncObj, HeapVal, InstanceObj, StructObj};
 use crate::{Flow, Interpreter, NativeClass, RtError, RtResult, Span, Value};
 
 impl Interpreter {
@@ -25,6 +27,28 @@ impl Interpreter {
                     RtError::runtime(Some(span), format!("object has no method `{}`", name))
                 })?;
                 self.call_value(&field, args, Some(receiver), span)
+            }
+            // struct 实例：字段优先（可调用则以 self 调用），否则查 impl 方法表
+            Value::Instance(inst) => {
+                let (struct_name, field, method) = {
+                    let inst = inst.borrow();
+                    let def = inst.def.borrow();
+                    (
+                        def.name.clone(),
+                        inst.fields.get(name).cloned(),
+                        def.methods.get(name).cloned(),
+                    )
+                };
+                if let Some(v) = field {
+                    return self.call_value(&v, args, Some(receiver), span);
+                }
+                if let Some(f) = method {
+                    return self.call_value(&Value::Func(f), args, Some(receiver), span);
+                }
+                Err(RtError::runtime(
+                    Some(span),
+                    format!("struct {} has no method `{}`", struct_name, name),
+                ))
             }
             // 原生类型方法分派
             _ => natives::call_method(&receiver, name, args, self, span),
@@ -54,6 +78,22 @@ impl Interpreter {
             Value::NativeClass(c) => Err(RtError::runtime(
                 Some(span),
                 format!("`{}` is a class, use `new {}(...)`", c.name(), c.name()),
+            )),
+            Value::Struct(s) => Err(RtError::runtime(
+                Some(span),
+                format!(
+                    "`{}` is a struct, use `new {}(...)`",
+                    s.borrow().name,
+                    s.borrow().name
+                ),
+            )),
+            Value::Interface(i) => Err(RtError::runtime(
+                Some(span),
+                format!("interface `{}` cannot be called or constructed", i.name),
+            )),
+            Value::Instance(inst) => Err(RtError::runtime(
+                Some(span),
+                format!("{} instance is not callable", inst.borrow().def.borrow().name),
             )),
             other => Err(RtError::runtime(
                 Some(span),
@@ -99,10 +139,14 @@ impl Interpreter {
     }
 
     pub(crate) fn construct(&mut self, class: &Value, args: &[Expr], span: Span) -> RtResult<Value> {
+        // 用户 struct：字段全 null 起步，有 `new` 方法则调用之，否则按位置初始化
+        if let Value::Struct(def) = class {
+            return construct_struct(self, def.clone(), args, span);
+        }
         let Value::NativeClass(kind) = class else {
             return Err(RtError::runtime(
                 Some(span),
-                "only native classes (Map / MaxHeap / MinHeap / Stack / Queue) can be constructed in v1",
+                "only native classes (Map / MaxHeap / MinHeap / Stack / Queue) and structs can be constructed",
             ));
         };
         match kind {
@@ -166,6 +210,59 @@ impl Interpreter {
             }
         }
     }
+}
+
+/// 用户 struct 构造：`new Point(1, 2)`
+/// - impl 定义了 `new` → 调用 `Point::new(1, 2)`（self 注入为新实例，返回值忽略）
+/// - 未定义 `new` → 参数按字段声明顺序赋值（无 new 方法时的便捷构造）
+fn construct_struct(
+    interp: &mut Interpreter,
+    def: Rc<RefCell<StructObj>>,
+    args: &[Expr],
+    span: Span,
+) -> RtResult<Value> {
+    let mut argv = Vec::with_capacity(args.len());
+    for a in args {
+        argv.push(interp.evaluate(a)?);
+    }
+    let new_method = def.borrow().methods.get("new").cloned();
+
+    // 全 null 字段起步
+    let mut fields = IndexMap::new();
+    for f in &def.borrow().fields {
+        fields.insert(f.clone(), Value::Null);
+    }
+    let instance = Value::Instance(Rc::new(RefCell::new(InstanceObj { def, fields })));
+
+    if let Some(new_fn) = new_method {
+        interp.call_value(&Value::Func(new_fn), argv, Some(instance.clone()), span)?;
+        return Ok(instance);
+    }
+
+    // 位置初始化：参数按声明顺序赋给字段
+    let Value::Instance(inst) = &instance else { unreachable!() };
+    let field_count = inst.borrow().fields.len();
+    if argv.len() > field_count {
+        let name = inst.borrow().def.borrow().name.clone();
+        return Err(RtError::runtime(
+            Some(span),
+            format!(
+                "new {}() takes at most {} argument(s) (field count), got {}",
+                name,
+                field_count,
+                argv.len()
+            ),
+        ));
+    }
+    {
+        let mut inst = inst.borrow_mut();
+        for (i, v) in argv.into_iter().enumerate() {
+            if let Some((_, slot)) = inst.fields.get_index_mut(i) {
+                *slot = v;
+            }
+        }
+    }
+    Ok(instance)
 }
 
 /// Stack()/Queue() 的初始化参数：无参或单个数组（按序装入，可异构）

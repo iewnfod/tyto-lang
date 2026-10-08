@@ -36,6 +36,7 @@ pub enum TokenKind {
     OrOr,
     Not,
     // 其它符号
+    Arrow,
     Dot,
     DotDot,
     DotDotEq,
@@ -92,6 +93,10 @@ pub enum Keyword {
     False,
     Null,
     New,
+    Struct,
+    Impl,
+    Interface,
+    Is,
 }
 
 impl Keyword {
@@ -110,6 +115,10 @@ impl Keyword {
             "false" => Keyword::False,
             "null" => Keyword::Null,
             "new" => Keyword::New,
+            "struct" => Keyword::Struct,
+            "impl" => Keyword::Impl,
+            "interface" => Keyword::Interface,
+            "is" => Keyword::Is,
             _ => return None,
         })
     }
@@ -129,6 +138,10 @@ impl Keyword {
             Keyword::False => "false",
             Keyword::Null => "null",
             Keyword::New => "new",
+            Keyword::Struct => "struct",
+            Keyword::Impl => "impl",
+            Keyword::Interface => "interface",
+            Keyword::Is => "is",
         }
     }
 }

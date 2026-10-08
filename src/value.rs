@@ -1,4 +1,4 @@
-use std::{cell::RefCell, cmp::Ordering, collections::{BinaryHeap, VecDeque}, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, collections::{BinaryHeap, VecDeque}, rc::Rc};
 
 use indexmap::IndexMap;
 
@@ -100,6 +100,29 @@ pub struct FuncObj {
     pub closure: ScopeRef,
 }
 
+/// `struct Point { x, y }`：字段声明 + impl 挂载的方法表（字段固定，实例共享方法）
+#[derive(Clone, Debug)]
+pub struct StructObj {
+    pub name: String,
+    pub fields: Vec<String>,
+    /// 方法注册名为 `Point::len` 形式（错误信息友好）
+    pub methods: IndexMap<String, Rc<FuncObj>>,
+}
+
+/// `interface Shape { function area() }`：方法名签名，纯声明（结构化 is 检查用）
+#[derive(Clone, Debug)]
+pub struct InterfaceObj {
+    pub name: String,
+    pub methods: Vec<String>,
+}
+
+/// struct 实例：持有 struct 定义（Rc 共享，后挂的 impl 对已有实例同样生效）+ 各自的字段
+#[derive(Clone, Debug)]
+pub struct InstanceObj {
+    pub def: Rc<RefCell<StructObj>>,
+    pub fields: IndexMap<String, Value>,
+}
+
 /// 原生类（`new MaxHeap()` 中 `MaxHeap` 求值的结果）
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeClass {
@@ -152,6 +175,12 @@ pub enum Value {
     NativeClass(NativeClass),
     NativeFn(&'static str),
     Func(Rc<FuncObj>),
+    /// struct 定义本身（`struct Point` 定义的绑定 `Point` 求值的结果）
+    Struct(Rc<RefCell<StructObj>>),
+    /// interface 定义本身
+    Interface(Rc<InterfaceObj>),
+    /// struct 实例（`new Point(...)` 的结果）
+    Instance(Rc<RefCell<InstanceObj>>),
 }
 
 impl Value {
@@ -220,6 +249,21 @@ impl Value {
             }
             Value::NativeClass(c) => format!("<class {}>", c.name()),
             Value::NativeFn(name) => format!("<native fn {}>", name),
+            Value::Struct(s) => format!("<struct {}>", s.borrow().name),
+            Value::Interface(i) => format!("<interface {}>", i.name),
+            Value::Instance(inst) => {
+                let inst = inst.borrow();
+                let name = &inst.def.borrow().name;
+                if inst.fields.is_empty() {
+                    return format!("{} {{}}", name);
+                }
+                let items: Vec<String> = inst
+                    .fields
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v.to_repr()))
+                    .collect();
+                format!("{} {{{}}}", name, items.join(", "))
+            }
             Value::Func(f) => {
                 if f.name.is_empty() {
                     "<function>".into()
@@ -241,23 +285,27 @@ impl Value {
         }
     }
 
-    pub fn type_name(&self) -> &'static str {
+    /// 类型名：实例返回其 struct 名（动态），故为 Cow；其余为 'static
+    pub fn type_name(&self) -> Cow<'static, str> {
         match self {
-            Value::Num(_) => "number",
-            Value::Str(_) => "string",
-            Value::Bool(_) => "boolean",
-            Value::Null => "null",
-            Value::Empty => "empty",
-            Value::Array(_) => "array",
-            Value::Obj(_) => "object",
-            Value::Map(_) => "map",
-            Value::MaxHeap(_) => "maxheap",
-            Value::MinHeap(_) => "minheap",
-            Value::Stack(_) => "stack",
-            Value::Queue(_) => "queue",
-            Value::NativeClass(_) => "class",
-            Value::NativeFn(_) => "native function",
-            Value::Func(_) => "function",
+            Value::Num(_) => Cow::Borrowed("number"),
+            Value::Str(_) => Cow::Borrowed("string"),
+            Value::Bool(_) => Cow::Borrowed("boolean"),
+            Value::Null => Cow::Borrowed("null"),
+            Value::Empty => Cow::Borrowed("empty"),
+            Value::Array(_) => Cow::Borrowed("array"),
+            Value::Obj(_) => Cow::Borrowed("object"),
+            Value::Map(_) => Cow::Borrowed("map"),
+            Value::MaxHeap(_) => Cow::Borrowed("maxheap"),
+            Value::MinHeap(_) => Cow::Borrowed("minheap"),
+            Value::Stack(_) => Cow::Borrowed("stack"),
+            Value::Queue(_) => Cow::Borrowed("queue"),
+            Value::NativeClass(_) => Cow::Borrowed("class"),
+            Value::NativeFn(_) => Cow::Borrowed("native function"),
+            Value::Func(_) => Cow::Borrowed("function"),
+            Value::Struct(_) => Cow::Borrowed("struct"),
+            Value::Interface(_) => Cow::Borrowed("interface"),
+            Value::Instance(i) => Cow::Owned(i.borrow().def.borrow().name.clone()),
         }
     }
 }
@@ -280,6 +328,9 @@ pub fn eq_value(a: &Value, b: &Value) -> bool {
         (Value::NativeClass(x), Value::NativeClass(y)) => x == y,
         (Value::NativeFn(x), Value::NativeFn(y)) => x == y,
         (Value::Func(x), Value::Func(y)) => Rc::ptr_eq(x, y),
+        (Value::Struct(x), Value::Struct(y)) => Rc::ptr_eq(x, y),
+        (Value::Interface(x), Value::Interface(y)) => Rc::ptr_eq(x, y),
+        (Value::Instance(x), Value::Instance(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }
 }

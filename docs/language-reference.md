@@ -4,10 +4,13 @@
 
 - [词法](#词法)
 - [类型与值](#类型与值)
+- [类型标注（不检查）](#类型标注不检查)
 - [运算符与表达式](#运算符与表达式)
 - [语句](#语句)
 - [函数与作用域](#函数与作用域)
 - [对象](#对象)
+- [struct 与 impl](#struct-与-impl)
+- [interface 与 is](#interface-与-is)
 - [内置类型：Array](#内置类型array)
 - [内置类型：String](#内置类型string)
 - [内置类型：Map](#内置类型map)
@@ -48,16 +51,17 @@ arr
 
 `[a-zA-Z_][a-zA-Z0-9_]*`，大小写敏感。
 
-关键字（共 14 个）：
+关键字（共 18 个）：
 
 ```
 function  return  if  else  while  for  in  break  continue
 true  false  null  new
+struct  impl  interface  is
 ```
 
-> ⚠️ `struct` / `impl` / `interface` / `is` / `let` 目前**不是**关键字（可作变量名），但它们是 v2 的预留方向，新代码请避免使用。
+> ⚠️ `let` 目前**不是**关键字（可作变量名），是后续版本的预留方向，新代码请避免使用。
 
-命名惯例（语言不强制）：变量/函数 `snake_case`，类型 `CamelCase`，常量 `UPPER_SNAKE`。
+命名惯例（语言不强制）：变量/函数 `snake_case`，类型（struct / interface）`CamelCase`，常量 `UPPER_SNAKE`。
 
 ### 字面量
 
@@ -89,6 +93,9 @@ true  false  null  new
 | stack | `"stack"` | `new Stack()`，LIFO |
 | queue | `"queue"` | `new Queue()`，FIFO |
 | function | `"function"` | 闭包（`print` 等原生函数为 `"native function"`） |
+| struct | `"struct"` | `struct P {...}` 定义本身（类型对象） |
+| interface | `"interface"` | `interface I {...}` 定义本身（类型对象） |
+| 实例 | struct 名（如 `"Point"`） | `new P(...)` 的结果；`type(p)` 返回 struct 名 |
 
 ### number 细则（JS 式）
 
@@ -114,6 +121,37 @@ null   EMPTY   false   0   nan   ""
 
 ---
 
+## 类型标注（不检查）
+
+Tyto **不是强类型语言**。类型标注是纯文档性质：让代码更清晰、为将来的类型推导保留信息，**运行时完全不检查**——标注与实际值不符不报错，删掉任何标注程序行为不变。
+
+可标注的位置：
+
+```
+x: number = 1                                       // 变量（必须带 = 值）
+function add(a: number, b: number) -> number {      // 参数 + 返回类型
+    return a + b
+}
+double = function(x: number) -> number { return x * 2 }   // 匿名函数同样支持
+struct Point {
+    x: number,          // struct 字段
+    y: number,
+}
+interface Shape {
+    function area() -> number    // interface 签名里也接受（只保留方法名契约）
+}
+```
+
+类型写法：标识符 + 可选泛型参数 + 可选 `[]` 后缀，如 `number`、`Point`、`number[]`、`Map<string, number>`。惯用基础名 `number` / `string` / `bool` / `null` / `any`，struct / interface 名，以及 `Array` / `Map` 等内置类名（语言不强制任何写法）。
+
+规则细节：
+
+- 变量标注只允许普通变量名 + `=`：`x: number = 1` 合法；`a[0]: number = 1`、`p.x: number = 1`、`x: number += 1`、缺 `=` 的单独 `x: number` 均为解析错误
+- `->` 在 `)` 之后、`{` 之前，可跨行书写
+- 标注会存入 AST 供工具使用；解释器只取参数/字段名，参数个数检查、作用域等一切语义照旧
+
+---
+
 ## 运算符与表达式
 
 ### 优先级（从低到高）
@@ -124,7 +162,7 @@ null   EMPTY   false   0   nan   ""
 | 2 | `??` | nullish 合并，短路，左结合 |
 | 3 | `\|\|` | 短路 |
 | 4 | `&&` | 短路 |
-| 5 | `==  !=` | |
+| 5 | `==  !=  is` | `is` 见 [interface 与 is](#interface-与-is) |
 | 6 | `<  >  <=  >=` | 仅 number×number 或 string×string |
 | 7 | `+  -` | |
 | 8 | `*  /  %` | |
@@ -303,6 +341,13 @@ println(add(1, 2))     // 3
 - **参数个数严格检查**：多了少了都报错
 - 函数声明在**执行到时**定义（无提升），先定义后调用
 - 递归天然可用（名字经闭包链查到）
+- 参数与返回值可加类型标注（纯文档性质，见[类型标注](#类型标注不检查)）：
+
+```
+function add(a: number, b: number) -> number {
+    return a + b
+}
+```
 
 ### 匿名函数（一等公民）
 
@@ -363,6 +408,123 @@ p = {
 对象没有任何内置方法（`len` 是全局函数）。Map 和对象是两个世界：Map 用 `get`/`insert`，对象用点访问，`p["x"]` 不支持。
 
 方法内调用兄弟方法：`self.other()`。构造对象的函数式风格见 `examples/objects.tyto`（链表）。
+
+---
+
+## struct 与 impl
+
+对象字面量是"随手造"的世界；struct 是**固定形状**的世界：字段先声明后使用，读/写未声明的字段都会报错（typo 早暴露），方法集中放在 `impl` 里、所有实例共享。
+
+```
+struct Point {
+    x,
+    y,
+}
+
+impl Point {
+    function new(x, y) {
+        self.x = x
+        self.y = y
+    }
+    function len() {
+        return sqrt(self.x * self.x + self.y * self.y)
+    }
+    function scaled(k) {
+        return new Point(self.x * k, self.y * k)
+    }
+}
+
+p = new Point(3, 4)
+println(p)          // Point {x: 3, y: 4}
+println(p.len())    // 5
+```
+
+### 声明
+
+- `struct Name { x, y }`：字段只写名字，也可带类型标注 `struct Point { x: number, y: number }`（纯文档性质，见[类型标注](#类型标注不检查)）；逗号或换行分隔，允许尾逗号；重复字段报运行时错误
+- `struct` 是语句，执行到时在当前作用域定义绑定 `Name`（先定义后使用，同函数声明）
+- 定义本身就是值：`println(Point)` → `<struct Point>`，`type(Point)` → `"struct"`
+
+### 构造：`new Name(args)`
+
+- 字段全部从 `null` 起步
+- impl 里定义了 `new` 方法 → 调用 `Name::new(args)`（`self` 注入为新实例），**返回值忽略**，表达式的值始终是新实例
+- 没定义 `new` → **按位置初始化**：参数按字段声明顺序赋值（`new Rect(3, 4)` 即 `w=3, h=4`）；参数多于字段数报错，无参则全 null
+- `Name(args)` 不带 `new` 直接调用报错（提示加 `new`）
+
+### 字段与方法
+
+| 操作 | 行为 |
+|---|---|
+| `p.x` 读 | 字段不存在 → **报错**（含方法名也一样，除非取方法，见下） |
+| `p.x = 5` 写 | 字段不存在 → **报错**，**不自动创建**（与对象的关键区别） |
+| `p.x += 1` | 复合赋值可用（字段存在时） |
+| `p?.x` | 可选链同对象语义（null 短路，非 null 严格读取） |
+| `p.f(args)` | 先查字段（是函数则以 `self` 调用），再查 impl 方法表；都没有 → 报错 |
+| `m = p.f` | 取出方法为普通函数，单独调用**不注入 `self`**（与对象方法一致） |
+| `len(p)` | 字段数 |
+| `has(p, "x")` | 是否有该字段 |
+| `p == q` | 引用比较 |
+| `println(p)` | `Point {x: 3, y: 4}`（空实例 `Point {}`） |
+
+- 字段与方法是两个命名空间，访问时**字段优先**
+- 方法内互调：`self.other()`；方法体内再构造同类：`new Point(...)`
+- `impl` 的目标必须是已定义的 struct（`impl x { ... }` 其中 x 不是 struct → 报错）
+- 同一 struct 可以多次 `impl`，后定义的同名方法**覆盖**旧的；实例持有 struct 定义的共享引用，后挂的方法对已有实例同样生效
+- impl 中方法闭包捕获 impl 执行时的作用域（顶层 impl 即全局作用域）
+
+struct 版链表见 `examples/shapes.tyto` 与 `tests/structs_test.rs`。
+
+---
+
+## interface 与 is
+
+`interface` 是**结构化**的类型声明：只列出方法签名，不改变任何运行时行为。一个值是否"实现"了接口，由 `is` 在运行时按**方法集**判断——没有也不需要显式的"实现"声明。
+
+```
+interface Shape {
+    function area()
+    function describe()
+}
+
+struct Rect { w, h }
+impl Rect {
+    function area() { return self.w * self.h }
+    function describe() { return "Rect " + self.w + "x" + self.h }
+}
+
+r = new Rect(3, 4)
+println(r is Shape)   // true：Rect 的 impl 覆盖了 Shape 的全部方法
+
+o = {area: function() { return 1 }, describe: function() { return "obj" }}
+println(o is Shape)   // true：普通对象按函数字段结构化匹配
+```
+
+### interface 声明
+
+- 方法签名只写 `function name(params)`，**没有函数体**（写了 `{` 是解析错误）
+- 签名之间用逗号或换行分隔；空接口合法（`interface Any {}`）
+- 执行到时定义绑定 `Name`（`type(I)` → `"interface"`，`println(I)` → `<interface Shape>`）；interface 不能被调用或构造
+
+### `is` 运算符
+
+优先级与 `==`/`!=` 同级、左结合：
+
+```
+if s is Shape && s.area() > 10 { ... }
+println(p is T == true)
+```
+
+| 右侧 | 判定规则 |
+|---|---|
+| struct（如 `p is Point`） | **名义**：p 是该 struct 的实例 → true；其余值（含其它 struct 的实例）→ false |
+| interface（如 `p is Shape`） | **结构化**：实例 → 其 struct 的 impl 方法表覆盖接口全部方法名；对象 → 这些名字的字段都是函数；其余类型 → false |
+| 其它值 | **运行时报错**（右侧必须是 struct 或 interface） |
+
+- 接口检查只看**方法名**，不看参数个数
+- `is` 不做任何隐式转换；实例与 struct 名之间的判断恒为布尔值，不会报错
+
+完整示例见 `examples/shapes.tyto`（异构集合 + `is` 过滤）。
 
 ---
 
@@ -480,7 +642,7 @@ h.pop()                    // 3（最大者；MinHeap 为最小者）
 | len | `len() → number` | |
 | is_empty | `is_empty() → bool` | |
 
-`new` 只能构造原生类（Map / MaxHeap / MinHeap / Stack / Queue）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
+`new` 能构造原生类（Map / MaxHeap / MinHeap / Stack / Queue）与用户 struct（见 [struct 与 impl](#struct-与-impl)）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
 
 ---
 
@@ -631,6 +793,8 @@ REPL：全局作用域跨输入保持；未闭合的 `{`/`(`/字符串自动续�
 | `1 == "1"` | false（无隐式转换） | true | — |
 | 数组越界 | 报错 | undefined | panic |
 | 读不存在的对象字段 | 报错 | undefined | 编译错 |
+| struct 未声明字段 | 读/写都报错（固定形状） | — | 编译错 |
+| 实现接口 | 结构化（`is` 按方法集判断） | implements 声明 | impl 声明 |
 | `this`/`self` | 仅 `obj.f()` 调用注入 | 动态 this | 显式 self 参数 |
 | 字符串 replace | 替换全部 | 替换第一个 | 替换全部 |
 | `round(-2.5)` | -3（away from zero） | -2 | -3 |
@@ -639,4 +803,4 @@ REPL：全局作用域跨输入保持；未闭合的 `{`/`(`/字符串自动续�
 
 ---
 
-*v2 方向（未实现）：`struct`/`impl`/单继承、结构化 `interface` 与 `is`、`new T()` 自动调 `T::new()`、模块导入、字符串插值、`match`。*
+*v2 方向（未实现）：单继承、模块导入、字符串插值、`match`。（struct / impl / interface / is 已在本文档落地。）*

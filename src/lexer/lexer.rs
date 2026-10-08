@@ -27,6 +27,7 @@ fn operator_table() -> &'static [(&'static str, TokenKind)] {
         ("/=", DivAssign),
         ("%=", ModAssign),
         ("..", DotDot),
+        ("->", Arrow),
         ("+", Plus),
         ("-", Minus),
         ("*", Star),
@@ -508,6 +509,21 @@ mod tests {
         // 运算符后的换行被抑制（可跨行书写）
         let ks = kinds("a ??\nb").unwrap();
         assert!(!ks.contains(&Eol));
+    }
+
+    #[test]
+    fn arrow_token() {
+        // `->` 是独立 token（函数返回类型标注用）
+        let ks = kinds("function f() -> number {}").unwrap();
+        assert_eq!(ks[4], Arrow);
+        assert_eq!(ks[5], Ident("number".into()));
+        // 与减号 / 大于号不混淆
+        let ks = kinds("a - b").unwrap();
+        assert_eq!(ks[1], Minus);
+        let ks = kinds("a >= b").unwrap();
+        assert_eq!(ks[1], Gte);
+        let ks = kinds("a > b").unwrap();
+        assert_eq!(ks[1], Gt);
     }
 
     #[test]

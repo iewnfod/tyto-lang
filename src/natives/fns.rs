@@ -56,6 +56,7 @@ pub fn call_global(
                 Value::Array(a) => a.borrow().len(),
                 Value::Str(s) => s.chars().count(),
                 Value::Obj(o) => o.borrow().fields.len(),
+                Value::Instance(i) => i.borrow().fields.len(),
                 Value::Map(m) => m.borrow().entries.len(),
                 Value::MaxHeap(h) => h.borrow().len(),
                 Value::MinHeap(h) => h.borrow().len(),
@@ -78,9 +79,12 @@ pub fn call_global(
                 (Value::Obj(o), Value::Str(field)) => {
                     Ok(Value::Bool(o.borrow().fields.contains_key(field)))
                 }
+                (Value::Instance(i), Value::Str(field)) => {
+                    Ok(Value::Bool(i.borrow().fields.contains_key(field)))
+                }
                 (other, _) => Err(RtError::runtime(
                     Some(span),
-                    format!("has(): expects an object, got {}", other.type_name()),
+                    format!("has(): expects an object or instance, got {}", other.type_name()),
                 )),
             }
         }

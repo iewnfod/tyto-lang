@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::ast::{BinaryOp, Expr, LogicOp, UnaryOp};
+use crate::ast::{BinaryOp, Expr, LogicOp, Param, UnaryOp};
 use crate::natives::resolve_slice_index;
 use crate::scope;
 use crate::value::{eq_value, FuncObj};
@@ -134,14 +134,20 @@ impl Interpreter {
                 self.construct(&cv, args, *span)
             }
             Expr::Function { params, body, .. } => {
+                // 参数的类型标注仅文档性质，FuncObj 只保留参数名
                 Ok(Value::Func(Rc::new(FuncObj {
                     name: String::new(),
-                    params: params.clone(),
+                    params: Param::names(params),
                     body: body.clone(),
                     closure: self.scope.clone(),
                 })))
             }
-        }
+            // 占位：任务「解释器语句与 is 求值」中实现
+            Expr::Is { operand, target, span } => {
+                let v = self.evaluate(operand)?;
+                let t = self.evaluate(target)?;
+                self.is_check(&v, &t, *span)
+            }        }
     }
 
     pub(crate) fn binary_op(&self, l: Value, op: BinaryOp, r: Value, span: Span) -> RtResult<Value> {
@@ -300,6 +306,23 @@ impl Interpreter {
             Value::Obj(obj) => obj.borrow().fields.get(name).cloned().ok_or_else(|| {
                 RtError::runtime(Some(span), format!("object has no field `{}`", name))
             }),
+            Value::Instance(inst) => {
+                // 字段优先，其次方法（取出为未绑定函数，单独调用不注入 self）
+                if let Some(v) = inst.borrow().fields.get(name) {
+                    return Ok(v.clone());
+                }
+                let method = inst.borrow().def.borrow().methods.get(name).cloned();
+                match method {
+                    Some(f) => Ok(Value::Func(f)),
+                    None => {
+                        let struct_name = inst.borrow().def.borrow().name.clone();
+                        Err(RtError::runtime(
+                            Some(span),
+                            format!("struct {} has no field or method `{}`", struct_name, name),
+                        ))
+                    }
+                }
+            }
             other => Err(RtError::runtime(
                 Some(span),
                 format!(
@@ -308,6 +331,41 @@ impl Interpreter {
                     name,
                     other.type_name(),
                     name
+                ),
+            )),
+        }
+    }
+
+    /// `v is T`：T 为 struct → 名义检查；为 interface → 结构化检查（方法集覆盖）
+    pub(crate) fn is_check(&self, v: &Value, target: &Value, span: Span) -> RtResult<Value> {
+        match target {
+            // 名义检查：v 是否为该 struct 的实例
+            Value::Struct(def) => Ok(Value::Bool(matches!(
+                v,
+                Value::Instance(inst) if Rc::ptr_eq(&inst.borrow().def, def)
+            ))),
+            // 结构化检查：实例查 impl 方法表；对象查函数字段；其余类型恒 false
+            Value::Interface(iface) => {
+                let ok = match v {
+                    Value::Instance(inst) => {
+                        let methods = inst.borrow().def.borrow().methods.clone();
+                        iface.methods.iter().all(|m| methods.contains_key(m))
+                    }
+                    Value::Obj(obj) => {
+                        let fields = &obj.borrow().fields;
+                        iface.methods.iter().all(|m| {
+                            matches!(fields.get(m), Some(Value::Func(_) | Value::NativeFn(_)))
+                        })
+                    }
+                    _ => false,
+                };
+                Ok(Value::Bool(ok))
+            }
+            other => Err(RtError::runtime(
+                Some(span),
+                format!(
+                    "right side of `is` must be a struct or interface, got {}",
+                    other.type_name()
                 ),
             )),
         }

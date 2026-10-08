@@ -43,6 +43,21 @@ pub enum AssignOp {
     Nullish,
 }
 
+/// 参数 / struct 字段：名字 + 可选类型标注。
+/// 标注是纯文档性质（为清晰与将来的类型推导保留），运行时完全不检查。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Option<String>,
+}
+
+impl Param {
+    /// 提取名字列表（丢弃类型标注——运行时只需要名字）
+    pub fn names(params: &[Param]) -> Vec<String> {
+        params.iter().map(|p| p.name.clone()).collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Num(f64, Span),
@@ -106,15 +121,22 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
-    /// `new MaxHeap(args)`；v1 仅原生类
+    /// `new MaxHeap(args)`；原生类或用户 struct
     New {
         class: Box<Expr>,
         args: Vec<Expr>,
         span: Span,
     },
-    /// 匿名函数 `function(x) { ... }`
+    /// `v is T`：T 为 struct → 名义检查；为 interface → 结构化检查
+    Is {
+        operand: Box<Expr>,
+        target: Box<Expr>,
+        span: Span,
+    },
+    /// 匿名函数 `function(x) { ... }`；params 可带 `: T` 标注，`-> T` 标注返回类型
     Function {
-        params: Vec<String>,
+        params: Vec<Param>,
+        ret: Option<String>,
         body: Rc<Stmt>,
         span: Span,
     },
@@ -140,6 +162,7 @@ impl Expr {
             | Expr::OptionalMember { span, .. }
             | Expr::Call { span, .. }
             | Expr::New { span, .. }
+            | Expr::Is { span, .. }
             | Expr::Function { span, .. } => *span,
         }
     }
@@ -163,6 +186,8 @@ pub enum Stmt {
         target: Expr,
         op: AssignOp,
         value: Expr,
+        /// `x: T = v` 的类型标注（仅普通变量的首次标注赋值非 None，运行时忽略）
+        ann: Option<String>,
         span: Span,
     },
     If {
@@ -193,8 +218,29 @@ pub enum Stmt {
     },
     FuncDecl {
         name: String,
-        params: Vec<String>,
+        params: Vec<Param>,
+        /// `-> T` 返回类型标注（运行时忽略）
+        ret: Option<String>,
         body: Rc<Stmt>,
+        span: Span,
+    },
+    /// `struct Point { x, y }`：字段声明（实例字段默认 null），可带 `: T` 标注
+    Struct {
+        name: String,
+        fields: Vec<Param>,
+        span: Span,
+    },
+    /// `impl Point { function ... }`：methods 全部为 FuncDecl（parser 保证），
+    /// 执行时逐个挂到 struct 的方法表
+    Impl {
+        target: String,
+        methods: Vec<Stmt>,
+        span: Span,
+    },
+    /// `interface Shape { function area() }`：方法名签名（无体，纯声明）
+    Interface {
+        name: String,
+        methods: Vec<String>,
         span: Span,
     },
     Return {
@@ -219,6 +265,9 @@ impl Stmt {
             | Stmt::ForIn { span, .. }
             | Stmt::ForC { span, .. }
             | Stmt::FuncDecl { span, .. }
+            | Stmt::Struct { span, .. }
+            | Stmt::Impl { span, .. }
+            | Stmt::Interface { span, .. }
             | Stmt::Return { span, .. }
             | Stmt::Break(span)
             | Stmt::Continue(span)
