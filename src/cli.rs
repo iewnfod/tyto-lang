@@ -15,6 +15,7 @@ use colored::Colorize;
 pub struct Settings {
     dump_tokens: bool,
     dump_ast: bool,
+    show_time: bool,
     lsp: bool,
 }
 
@@ -22,7 +23,7 @@ pub struct Settings {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Repl,
-    RunScript { path: String, script_args: Vec<String> },
+    RunScript { path: String, script_args: Vec<String>, time: bool },
     DumpTokens { path: String },
     DumpAst { path: String },
     /// `tyto lsp`：stdio 语言服务器（编辑器插件用）
@@ -54,6 +55,10 @@ fn set_dump_ast(s: &mut Settings, _: &[String]) {
     s.dump_ast = true;
 }
 
+fn set_show_time(s: &mut Settings, _: &[String]) {
+    s.show_time = true;
+}
+
 fn show_help(_: &mut Settings, _: &[String]) {
     print_help();
 }
@@ -78,6 +83,14 @@ const OPTIONS: &[Opt] = &[
         description: "Parse only: print the AST",
         value_num: 0,
         run: set_dump_ast,
+        exit_after: false,
+    },
+    Opt {
+        short: "-T",
+        long: "--time",
+        description: "Print elapsed time after the script finishes",
+        value_num: 0,
+        run: set_show_time,
         exit_after: false,
     },
     Opt {
@@ -137,7 +150,7 @@ pub fn parse(argv: &[String]) -> Command {
         // 两个调试开关都给时 --tokens 优先
         Some(path) if settings.dump_tokens => Command::DumpTokens { path },
         Some(path) if settings.dump_ast => Command::DumpAst { path },
-        Some(path) => Command::RunScript { path, script_args },
+        Some(path) => Command::RunScript { path, script_args, time: settings.show_time },
         None if settings.dump_tokens => missing_file("--tokens"),
         None if settings.dump_ast => missing_file("--ast"),
         None if settings.lsp => Command::Lsp,
@@ -216,11 +229,15 @@ mod tests {
     fn first_positional_is_script_rest_are_args() {
         assert_eq!(
             parse_args(&["s.tyto"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec![] }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: false }
         );
         assert_eq!(
             parse_args(&["s.tyto", "a", "b"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec!["a".into(), "b".into()] }
+            Command::RunScript {
+                path: "s.tyto".into(),
+                script_args: vec!["a".into(), "b".into()],
+                time: false
+            }
         );
     }
 
@@ -241,12 +258,30 @@ mod tests {
     }
 
     #[test]
+    fn time_flag_long_and_short_anywhere() {
+        assert_eq!(
+            parse_args(&["--time", "s.tyto"]),
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true }
+        );
+        assert_eq!(
+            parse_args(&["s.tyto", "-T"]),
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true }
+        );
+        // 不影响调试开关
+        assert_eq!(
+            parse_args(&["--time", "--tokens", "f.tyto"]),
+            Command::DumpTokens { path: "f.tyto".into() }
+        );
+    }
+
+    #[test]
     fn separator_passes_dash_args_to_script() {
         assert_eq!(
             parse_args(&["s.tyto", "--", "-t", "b"]),
             Command::RunScript {
                 path: "s.tyto".into(),
                 script_args: vec!["-t".into(), "b".into()],
+                time: false,
             }
         );
     }
@@ -261,7 +296,7 @@ mod tests {
         // 文件先出现时 `lsp` 只是普通脚本参数
         assert_eq!(
             parse_args(&["s.tyto", "lsp"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec!["lsp".into()] }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec!["lsp".into()], time: false }
         );
         // `--` 之后不解析选项，`lsp` 原样传给脚本
         assert_eq!(
@@ -269,6 +304,7 @@ mod tests {
             Command::RunScript {
                 path: "s.tyto".into(),
                 script_args: vec!["lsp".into()],
+                time: false,
             }
         );
     }

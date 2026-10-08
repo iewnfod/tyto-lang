@@ -774,6 +774,7 @@ tyto                  # REPL
 tyto lsp              # 语言服务器（stdio，编辑器插件用；补全/悬停的类型推导）
 tyto --tokens f       # 调试：打印 token 流（行:列 + 类型），短参 -t
 tyto --ast f          # 调试：打印 AST，短参 -a
+tyto --time f         # 脚本执行完后输出耗时（stderr），短参 -T
 ```
 
 选项可放在任意位置；以 `-` 开头的脚本参数需用 `--` 分隔（`tyto s.tyto -- -t` 中的 `-t` 会传给脚本而不是当成选项）。未知选项与缺文件的调试开关以退出码 2 结束。
