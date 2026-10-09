@@ -211,7 +211,7 @@ impl Checker {
         self.check_func_body(name, params, type_params, ret, body, Some((target.to_string(), args)), span);
     }
 
-    fn bind_params(&mut self, params: &[Param]) {
+    pub(crate) fn bind_params(&mut self, params: &[Param]) {
         for p in params {
             let ty = p.ty.as_ref().map(|a| self.ann_ty(a)).unwrap_or(Type::Any);
             self.define(&p.name, Binding { ty, is_const: false, declared: None, let_decl: None, func: None });

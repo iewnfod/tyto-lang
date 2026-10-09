@@ -3,8 +3,9 @@
 use crate::Span;
 
 use super::builtins;
-use super::infer::{self, Ty};
-use super::scope::{self, Binding, Ctx, ScopeSnapshot, StructRegistry};
+use super::ty_view::{self, editor_display};
+use crate::checker::ty::Type;
+use super::scope::{self, Binding, ScopeSnapshot, StructRegistry};
 use super::semantics;
 use super::tolerate;
 use super::{CompleteItem, ItemKind};
@@ -43,14 +44,50 @@ pub(super) fn type_items(src: &str, cursor: Span) -> Vec<CompleteItem> {
 
 // ============ 成员补全 ============
 
-pub(super) fn member_items(snap: &ScopeSnapshot) -> Vec<CompleteItem> {
-    let Some(recv_expr) = &snap.receiver else {
+pub(super) fn member_items(snap: &mut ScopeSnapshot) -> Vec<CompleteItem> {
+    let Some(recv) = snap.receiver_ty.clone() else {
         return all_method_items();
     };
-    let ctx = Ctx { scopes: &snap.scopes, structs: &snap.structs };
-    let recv = infer::infer(recv_expr, &ctx);
-    let mut items = match &recv {
-        Ty::Namespace(ns) => builtins::namespace_fns(ns)
+    let mut items = items_for_recv(&recv, snap);
+    items.dedup_by(|a, b| a.label == b.label);
+    items
+}
+
+/// 接收者类型 → 成员补全条目。
+/// 语义：Any / 泛型参数 → 全量方法池（不可知不收窄）；联合 → 去 null 后
+/// 单臂按该臂、多臂取各臂成员的**交集**（每个臂都得有才合法）；带元素/
+/// 键值形参的容器与裸容器同表（方法表按类别分发）。
+fn items_for_recv(recv: &Type, snap: &mut ScopeSnapshot) -> Vec<CompleteItem> {
+    match recv {
+        Type::Union(ms) => {
+            let arms: Vec<&Type> = ms.iter().filter(|m| !matches!(m, Type::Null)).collect();
+            // 任一臂不可知：无法收窄，全池
+            if arms.iter().any(|m| matches!(m, Type::Any | Type::TypeVar(_))) {
+                return all_method_items();
+            }
+            match arms.as_slice() {
+                [] => Vec::new(),
+                [only] => items_for_recv(only, snap),
+                _ => {
+                    let sets: Vec<std::collections::HashSet<String>> = arms
+                        .iter()
+                        .map(|a| member_labels(a, &snap.structs))
+                        .collect();
+                    let mut common = sets[0].clone();
+                    for s in &sets[1..] {
+                        common.retain(|l| s.contains(l));
+                    }
+                    // 条目取第一臂（交集 ⊆ 每臂标签集，过滤后即共有成员）
+                    items_for_recv(arms[0], snap)
+                        .into_iter()
+                        .filter(|i| common.contains(&i.label))
+                        .collect()
+                }
+            }
+        }
+        // 未知 / 泛型参数：全量方法池（与旧行为一致）
+        Type::Any | Type::TypeVar(_) => all_method_items(),
+        Type::Namespace(ns) => builtins::namespace_fns(ns)
             .map(|fns| {
                 fns.iter()
                     .map(|f| CompleteItem {
@@ -62,26 +99,32 @@ pub(super) fn member_items(snap: &ScopeSnapshot) -> Vec<CompleteItem> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
-        Ty::Struct(name) => struct_member_items(name, &ctx),
-        Ty::Object(fields) => fields
+        Type::Struct(name, _) => struct_member_items(name, snap),
+        Type::Object(fields) => fields
             .iter()
-            .map(|f| CompleteItem {
-                label: f.name.clone(),
-                kind: if f.is_fn { ItemKind::Method } else { ItemKind::Field },
-                detail: match &f.ty {
-                    Ty::Func(Some(ret)) => format!("{}() -> {}", f.name, ret.display()),
-                    Ty::Func(None) => format!("{}()", f.name),
-                    t => format!("{}: {}", f.name, t.display()),
-                },
-                doc: if f.is_fn { "方法字段（对象字面量）".into() } else { "字段（对象字面量）".into() },
+            .map(|(name, ty)| {
+                let is_fn = matches!(ty, Type::Func(_));
+                CompleteItem {
+                    label: name.clone(),
+                    kind: if is_fn { ItemKind::Method } else { ItemKind::Field },
+                    detail: match ty {
+                        Type::Func(f) => match &f.ret {
+                            Some(r) => format!("{}() -> {}", name, editor_display(r)),
+                            None => format!("{}()", name),
+                        },
+                        t => format!("{}: {}", name, editor_display(t)),
+                    },
+                    doc: if is_fn { "方法字段（对象字面量）".into() } else { "字段（对象字面量）".into() },
+                }
             })
             .collect(),
         // 基本类型没有成员
-        Ty::Number | Ty::Bool | Ty::Null | Ty::Empty | Ty::Func(_) | Ty::StructDef(_)
-        | Ty::InterfaceDef(_) => Vec::new(),
-        // 内置容器类型
-        Ty::Array | Ty::Str | Ty::Map | Ty::MaxHeap | Ty::MinHeap | Ty::Stack | Ty::Queue => {
-            match builtins::methods_for(&recv) {
+        Type::Number | Type::Bool | Type::Null | Type::Empty | Type::Func(_)
+        | Type::StructDef(_) | Type::InterfaceDef(_) => Vec::new(),
+        // 内置容器类型（元素/键值形参不影响方法表分发）
+        Type::Array(_) | Type::Str | Type::Map(..) | Type::MaxHeap | Type::MinHeap
+        | Type::Stack | Type::Queue => {
+            match builtins::methods_for(recv) {
                 Some(ms) => ms
                     .iter()
                     .map(|m| CompleteItem {
@@ -94,16 +137,36 @@ pub(super) fn member_items(snap: &ScopeSnapshot) -> Vec<CompleteItem> {
                 None => Vec::new(),
             }
         }
-        // 未知：全量方法池（与旧行为一致）
-        Ty::Unknown => return all_method_items(),
-    };
-    items.dedup_by(|a, b| a.label == b.label);
-    items
+    }
 }
 
-/// struct 实例成员：字段（声明顺序）+ impl 方法
-fn struct_member_items(name: &str, ctx: &Ctx) -> Vec<CompleteItem> {
-    let Some(info) = ctx.structs.get(name) else {
+/// 一个接收者类型的成员标签集（联合交集与条目过滤用；owned 避免跨借用纠缠）
+fn member_labels(recv: &Type, structs: &StructRegistry) -> std::collections::HashSet<String> {
+    match recv {
+        Type::Namespace(ns) => builtins::namespace_fns(ns)
+            .map(|fns| fns.iter().map(|f| f.name.to_string()).collect())
+            .unwrap_or_default(),
+        Type::Struct(name, _) => structs
+            .get(name)
+            .map(|info| {
+                info.fields
+                    .iter()
+                    .map(|f| f.name.clone())
+                    .chain(info.methods.iter().map(|m| m.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Type::Object(fields) => fields.iter().map(|(n, _)| n.clone()).collect(),
+        t => builtins::methods_for(t)
+            .map(|ms| ms.iter().map(|m| m.name.to_string()).collect())
+            .unwrap_or_default(),
+    }
+}
+
+/// struct 实例成员：字段（声明顺序）+ impl 方法。
+/// 无标注方法的返回类型由引擎按需从方法体推导（`snap.ck`）。
+fn struct_member_items(name: &str, snap: &mut ScopeSnapshot) -> Vec<CompleteItem> {
+    let Some(info) = snap.structs.get(name) else {
         return Vec::new();
     };
     let mut items: Vec<CompleteItem> = info
@@ -120,14 +183,14 @@ fn struct_member_items(name: &str, ctx: &Ctx) -> Vec<CompleteItem> {
         })
         .collect();
     for m in &info.methods {
-        // 返回类型：`-> T` 标注优先，否则从方法体 return 推导
+        // 返回类型：`-> T` 标注优先，否则引擎从方法体 return 推导
         let ret_str = match &m.ret {
             Some(t) => Some(t.to_string()),
-            None => infer::function_return(&m.params, &m.body, ctx).map(|t| t.display()),
+            None => snap.ck.infer_func_ret(&m.params, &m.body).map(|t| editor_display(&t)),
         };
         let detail = match ret_str {
-            Some(r) => format!("{} -> {}", infer::func_sig(&m.name, &m.params, None), r),
-            None => infer::func_sig(&m.name, &m.params, None),
+            Some(r) => format!("{} -> {}", ty_view::func_sig(&m.name, &m.params, None), r),
+            None => ty_view::func_sig(&m.name, &m.params, None),
         };
         items.push(CompleteItem {
             label: m.name.clone(),

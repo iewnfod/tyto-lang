@@ -86,6 +86,7 @@ pub fn semantic_tokens(src: &str) -> Vec<SemTok> {
         tok_pos: 0,
         scopes: vec![HashMap::new()],
         emitted: Vec::new(),
+        ck: crate::checker::Checker::for_cursor(structs.clone()),
     };
     hl.walk_stmts(top_stmts(&program));
     out.extend(hl.emitted);

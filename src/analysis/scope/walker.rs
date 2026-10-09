@@ -1,14 +1,20 @@
 //! 光标走查器：沿「走到哨兵的路径」收集作用域链与接收者。
+//!
+//! 类型推导单源到 checker 引擎：走查器持引擎镜像链（[`Checker`] 光标
+//! 模式），编辑器作用域与引擎作用域**成对**压栈/登记，绑定类型与表达式
+//! 类型全部由引擎给出（[`register_leaf`] 内成对登记）。
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::{Expr, ForIter, Param, Stmt, TypeAst};
+use crate::checker::ty::Type;
+use crate::checker::{Binding as CkBinding, Checker};
 use crate::Span;
 
-use super::super::infer::{infer as infer_expr, ty_from_ast, Ty};
+use super::super::ty_view::{editor_display, ty_from_ast};
 use super::super::ItemKind;
-use super::{register_leaf, top_stmts, Binding, Ctx, SENTINEL};
+use super::{register_leaf, top_stmts, Binding, SENTINEL};
 use crate::checker::registry::StructRegistry;
 
 pub(super) struct Walker<'a> {
@@ -17,6 +23,8 @@ pub(super) struct Walker<'a> {
     /// 哨兵 Member 的接收者
     pub(super) receiver: Option<Expr>,
     pub(super) s: Span,
+    /// 引擎镜像链：与 scopes 成对操作（光标走查只下钻不回退，压栈即可）
+    pub(super) ck: Checker,
 }
 
 impl<'a> Walker<'a> {
@@ -54,7 +62,7 @@ impl<'a> Walker<'a> {
                         params,
                         ret,
                         body,
-                        Some(Ty::Struct(target.clone())),
+                        Some(Type::Struct(target.clone(), Vec::new())),
                         scopes,
                     );
                 }
@@ -65,6 +73,7 @@ impl<'a> Walker<'a> {
                     self.walk_expr(cond, scopes);
                 }
                 scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(then_block), scopes);
                 // else 链：else-if 的 else_block 是 If 语句而非 Block，走 descend
                 //（Block 分支自己会压作用域；span 门控自然失效的一侧无副作用）
@@ -77,22 +86,25 @@ impl<'a> Walker<'a> {
                     self.walk_expr(cond, scopes);
                 }
                 scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(body), scopes);
             }
             Stmt::ForIn { var, iter, body, .. } => {
                 scopes.push(HashMap::new());
+                self.ck.push_scope();
                 let elem = match iter {
-                    ForIter::Range { .. } => Ty::Number,
-                    ForIter::Expr(Expr::Str(..)) => Ty::Str,
+                    ForIter::Range { .. } => Type::Number,
+                    ForIter::Expr(Expr::Str(..)) => Type::Str,
                     ForIter::Expr(e) => {
                         // 迭代目标里可能有哨兵（`for c in s.|`）
                         if e.span() <= self.s {
                             self.walk_expr(e, scopes);
                         }
-                        let ctx = Ctx { scopes, structs: self.structs };
-                        match infer_expr(e, &ctx) {
-                            Ty::Str => Ty::Str,
-                            _ => Ty::Unknown, // 数组异构
+                        // 引擎推导：数组取元素类型（异构为 Any），与检查器语义一致
+                        match self.ck.infer(e) {
+                            Type::Str => Type::Str,
+                            Type::Array(el) => *el,
+                            _ => Type::Any,
                         }
                     }
                 };
@@ -102,16 +114,18 @@ impl<'a> Walker<'a> {
                         name: var.clone(),
                         ty: elem.clone(),
                         kind: ItemKind::Variable,
-                        detail: format!("{}: {}", var, elem.display()),
+                        detail: format!("{}: {}", var, editor_display(&elem)),
                         doc: "循环变量".into(),
                         // `for x in` / `for x =`：名字在关键字 + 空格之后
                         span: Span::new(stmt.span().line, stmt.span().col + 4),
                     },
                 );
+                self.ck.define(var, CkBinding::plain(elem));
                 self.walk_stmts(top_stmts(body), scopes);
             }
             Stmt::ForC { var, init, cond, step, body, .. } => {
                 scopes.push(HashMap::new());
+                self.ck.push_scope();
                 if init.span() <= self.s {
                     self.walk_expr(init, scopes);
                 }
@@ -121,23 +135,24 @@ impl<'a> Walker<'a> {
                 if let Some(st) = step {
                     self.walk_stmt_step(st, scopes);
                 }
-                let ctx = Ctx { scopes, structs: self.structs };
-                let t = infer_expr(init, &ctx);
+                let t = self.ck.infer(init);
                 scopes.last_mut().unwrap().insert(
                     var.clone(),
                     Binding {
                         name: var.clone(),
                         ty: t.clone(),
                         kind: ItemKind::Variable,
-                        detail: format!("{}: {}", var, t.display()),
+                        detail: format!("{}: {}", var, editor_display(&t)),
                         doc: "循环变量".into(),
                         span: Span::new(stmt.span().line, stmt.span().col + 4),
                     },
                 );
+                self.ck.define(var, CkBinding::plain(t));
                 self.walk_stmts(top_stmts(body), scopes);
             }
             Stmt::Block { .. } => {
                 scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(stmt), scopes);
             }
             // 含函数字面量/哨兵的普通语句：走表达式路径（赋值目标与值都走——
@@ -175,14 +190,15 @@ impl<'a> Walker<'a> {
         params: &[Param],
         ret: &Option<TypeAst>,
         body: &Rc<Stmt>,
-        self_ty: Option<Ty>,
+        self_ty: Option<Type>,
         scopes: &mut Vec<HashMap<String, Binding>>,
     ) {
         self.inside_func = true;
         scopes.push(HashMap::new());
+        self.ck.push_scope();
         let frame = scopes.last_mut().unwrap();
         if let Some(t) = &self_ty {
-            let sname = t.display();
+            let sname = editor_display(t);
             frame.insert(
                 "self".into(),
                 Binding {
@@ -194,24 +210,26 @@ impl<'a> Walker<'a> {
                     span: Span::default(),
                 },
             );
+            self.ck.define("self", CkBinding::plain(t.clone()));
         }
         for p in params {
             let ty = p
                 .ty
                 .as_ref()
                 .map(|a| ty_from_ast(a, self.structs))
-                .unwrap_or(Ty::Unknown);
+                .unwrap_or(Type::Any);
             frame.insert(
                 p.name.clone(),
                 Binding {
-                    detail: format!("{}: {}", p.name, ty.display()),
+                    detail: format!("{}: {}", p.name, editor_display(&ty)),
                     name: p.name.clone(),
-                    ty,
+                    ty: ty.clone(),
                     kind: ItemKind::Parameter,
                     doc: format!("参数（function {}）", name),
                     span: Span::default(),
                 },
             );
+            self.ck.define(&p.name, CkBinding::plain(ty));
         }
         let _ = ret;
         self.walk_stmts(top_stmts(body), scopes);
@@ -242,12 +260,11 @@ impl<'a> Walker<'a> {
                     }
                     if let Expr::Function { params, ret, body, .. } = value {
                         // self = 整个对象的已知形状（字段递归推导）
-                        let ctx = Ctx { scopes, structs: self.structs };
-                        let shape = match infer_expr(expr, &ctx) {
-                            Ty::Object(fs) => fs,
-                            _ => Rc::new(Vec::new()),
+                        let shape = match self.ck.infer(expr) {
+                            Type::Object(fs) => fs.clone(),
+                            _ => Rc::from(Vec::new()),
                         };
-                        let self_ty = Some(Ty::Object(shape));
+                        let self_ty = Some(Type::Object(shape));
                         self.enter_function(field_name, params, ret, body, self_ty, scopes);
                     } else {
                         self.walk_expr(value, scopes);
@@ -325,49 +342,67 @@ impl<'a> Walker<'a> {
     /// 登记语句在当前层产生的绑定（不进函数体——那是独立作用域，
     /// 由 descend 在光标位于其中时进入）
     fn register(&mut self, stmt: &Stmt, scopes: &mut Vec<HashMap<String, Binding>>) {
-        match stmt {
-            // 控制流体内对链上绑定的写入：浅层登记（不进函数体）
-            Stmt::If { then_block, else_block, .. } => {
-                self.register_block_shallow(then_block, scopes);
-                if let Some(e) = else_block {
-                    self.register_block_shallow(e, scopes);
-                }
+        register_stmt_shallow(&mut self.ck, stmt, scopes);
+    }
+}
+
+/// 浅层登记一条语句（编辑器绑定 + 引擎镜像成对；自由函数供 ambient 复用）
+fn register_stmt_shallow(
+    ck: &mut Checker,
+    stmt: &Stmt,
+    scopes: &mut Vec<HashMap<String, Binding>>,
+) {
+    match stmt {
+        // 控制流体内对链上绑定的写入：浅层登记（不进函数体）
+        Stmt::If { then_block, else_block, .. } => {
+            register_block_shallow(ck, then_block, scopes);
+            if let Some(e) = else_block {
+                register_block_shallow(ck, e, scopes);
             }
-            Stmt::While { body, .. } | Stmt::ForIn { body, .. } | Stmt::ForC { body, .. } => {
-                self.register_block_shallow(body, scopes);
-            }
-            Stmt::Block { .. } => self.register_block_shallow(stmt, scopes),
-            leaf => register_leaf(self.structs, leaf, scopes),
+        }
+        Stmt::While { body, .. } | Stmt::ForIn { body, .. } | Stmt::ForC { body, .. } => {
+            register_block_shallow(ck, body, scopes);
+        }
+        Stmt::Block { .. } => register_block_shallow(ck, stmt, scopes),
+        leaf => register_leaf(ck, leaf, scopes),
+    }
+}
+
+/// 浅层登记块内语句（链上写入对后续可见；函数体内的声明不外泄的近似——
+/// 直接登记到当前层，编辑器视角够用）
+fn register_block_shallow(
+    ck: &mut Checker,
+    block: &Stmt,
+    scopes: &mut Vec<HashMap<String, Binding>>,
+) {
+    for s in top_stmts(block) {
+        // 只登记赋值与声明；控制流递归浅走
+        if matches!(
+            s,
+            Stmt::Assign { .. }
+                | Stmt::FuncDecl { .. }
+                | Stmt::Struct { .. }
+                | Stmt::Interface { .. }
+                | Stmt::If { .. }
+                | Stmt::While { .. }
+                | Stmt::ForIn { .. }
+                | Stmt::ForC { .. }
+                | Stmt::Block { .. }
+        ) {
+            register_stmt_shallow(ck, s, scopes);
         }
     }
+}
 
-    /// 浅层登记块内语句（链上写入对后续可见；函数体内的声明不外泄的近似——
-    /// 直接登记到当前层，编辑器视角够用）
-    fn register_block_shallow(&mut self, block: &Stmt, scopes: &mut Vec<HashMap<String, Binding>>) {
-        for s in top_stmts(block) {
-            // 只登记赋值与声明；控制流递归浅走
-            if matches!(
-                s,
-                Stmt::Assign { .. }
-                    | Stmt::FuncDecl { .. }
-                    | Stmt::Struct { .. }
-                    | Stmt::Interface { .. }
-                    | Stmt::If { .. }
-                    | Stmt::While { .. }
-                    | Stmt::ForIn { .. }
-                    | Stmt::ForC { .. }
-                    | Stmt::Block { .. }
-            ) {
-                self.register(s, scopes);
-            }
-        }
-    }
-
-    /// ambient（整个文件减光标语句）的顶层绑定：只走顶层与控制流体，
-    /// 不进函数体；控制流内的赋值沿链登记（对齐运行期的全局可见性）
-    pub(super) fn register_globals_ambient(&mut self, stmts: &[Stmt], scopes: &mut Vec<HashMap<String, Binding>>) {
-        for s in stmts {
-            self.register(s, scopes);
-        }
+/// ambient（整个文件减光标语句）的顶层绑定：只走顶层与控制流体，
+/// 不进函数体；控制流内的赋值沿链登记（对齐运行期的全局可见性）。
+/// 引擎用独立实例（不进函数体，无需压栈作用域）。
+pub(super) fn register_globals_ambient(
+    stmts: &[Stmt],
+    scopes: &mut Vec<HashMap<String, Binding>>,
+    ck: &mut Checker,
+) {
+    for s in stmts {
+        register_stmt_shallow(ck, s, scopes);
     }
 }

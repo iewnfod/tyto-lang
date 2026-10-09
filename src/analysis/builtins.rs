@@ -2,15 +2,14 @@
 //!
 //! **事实来源纪律**：内置方法 / 全局函数 / fs·sys 命名空间函数 / 内置类的
 //! 名字、签名、文档与返回类型都以 [`crate::checker::builtins`] 为单一事实源，
-//! 本模块经 [`super::bridge`] 把返回类型换算为编辑器 [`Ty`] 后对外提供查询；
+//! 本模块直接转发（类型表示已统一为 `checker::ty::Type`，无转换层）；
 //! 不再维护独立副本（漂移由此不可能发生）。
 //! 仍留在本文件的只有纯编辑器展示数据：关键字、类型标注名、常量与类的
 //! 展示签名（checker 不消费它们）。
 //! 修改内置库（src/natives）时只改 checker::builtins。
 
-use super::bridge::{checker_to_ty, ty_to_checker};
-use super::infer::Ty;
 use crate::checker::builtins as cb;
+use crate::checker::ty::Type;
 
 /// 全局函数：`num` / `len` / `print` ……（数据来自 checker 事实源）
 #[derive(Clone)]
@@ -18,7 +17,7 @@ pub struct FnSig {
     pub name: &'static str,
     pub sig: &'static str,
     pub doc: &'static str,
-    pub ret: Ty,
+    pub ret: Type,
 }
 
 /// 方法条目（名字/签名/文档；返回类型由 [`method_return`] 按接收者查询）
@@ -48,7 +47,7 @@ pub const CONSTANTS: &[(&str, &str, &str)] = &[
     ("sys", "sys.*", "系统命名空间：shell / get_env / args"),
 ];
 
-/// 类型标注可用名（与 infer::ty_from_annotation / Ty::from_type_name 对齐）。
+/// 类型标注可用名（与 checker::ty::from_ast 的名字解析对齐）。
 /// 用户 struct / interface 由分析层追加（见 analysis::type_items）。
 pub const TYPES: &[(&str, &str, &str)] = &[
     ("number", "number", "数字类型"),
@@ -71,7 +70,7 @@ pub fn all_globals() -> Vec<FnSig> {
             name: f.name,
             sig: f.sig,
             doc: f.doc,
-            ret: checker_to_ty(&(f.ret)()),
+            ret: (f.ret)(),
         })
         .collect()
 }
@@ -82,13 +81,13 @@ pub fn all_methods() -> Vec<&'static MethodSig> {
 }
 
 /// 按接收者类型给出方法表；未知类型返回 None（由调用方决定兜底）。
-pub fn methods_for(ty: &Ty) -> Option<&'static [MethodSig]> {
-    cb::methods_for(&ty_to_checker(ty))
+pub fn methods_for(ty: &Type) -> Option<&'static [MethodSig]> {
+    cb::methods_for(ty)
 }
 
 /// 方法返回类型查表（内置类型）
-pub fn method_return(ty: &Ty, name: &str) -> Option<Ty> {
-    cb::method_return(&ty_to_checker(ty), name).map(|t| checker_to_ty(&t))
+pub fn method_return(ty: &Type, name: &str) -> Option<Type> {
+    cb::method_return(ty, name)
 }
 
 pub fn global_fn(name: &str) -> Option<FnSig> {
@@ -96,7 +95,7 @@ pub fn global_fn(name: &str) -> Option<FnSig> {
         name: f.name,
         sig: f.sig,
         doc: f.doc,
-        ret: checker_to_ty(&(f.ret)()),
+        ret: (f.ret)(),
     })
 }
 
@@ -113,7 +112,7 @@ pub fn namespace_fns(ns: &str) -> Option<Vec<FnSig>> {
                 name: f.name,
                 sig: f.sig,
                 doc: f.doc,
-                ret: checker_to_ty(&(f.ret)()),
+                ret: (f.ret)(),
             })
             .collect(),
     )
@@ -125,6 +124,6 @@ pub fn is_builtin_class(name: &str) -> bool {
 }
 
 /// `new Builtin()` 的实例类型
-pub fn class_instance(name: &str) -> Option<Ty> {
-    cb::class_instance(name).map(|t| checker_to_ty(&t))
+pub fn class_instance(name: &str) -> Option<Type> {
+    cb::class_instance(name)
 }

@@ -1,9 +1,10 @@
 //! 跳转定义：光标处的词 → 声明处位置（复用名字定位扫描索引）。
 
-use crate::analysis::infer::{self, Ty};
-use crate::analysis::scope::{self, Ctx};
+use crate::analysis::ty_view;
+use crate::analysis::scope;
 use crate::analysis::tolerate;
 use crate::analysis::{before_word, word_at, ItemKind};
+use crate::checker::ty::Type;
 use crate::Span;
 
 use super::names::{scan_names, NameRole, NameTok};
@@ -36,10 +37,10 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
         let registry_src = ambient.as_ref().unwrap_or(&patched.program);
         let reg = scope::collect_registry(registry_src);
         let snap = scope::collect_at_cursor(&patched.program, patched.sentinel, ambient.as_ref(), &reg);
-        let recv_expr = snap.receiver?;
-        let ctx = Ctx { scopes: &snap.scopes, structs: &snap.structs };
-        let recv = infer::infer(&recv_expr, &ctx);
-        if let Ty::Struct(sname) = &recv {
+        // 接收者类型已在快照期由引擎推出（联合解析见 member_recv）
+        let recv = snap.receiver_ty.clone()?;
+        let recv = ty_view::member_recv(&recv).unwrap_or(&Type::Any);
+        if let Type::Struct(sname, _) = recv {
             // impl 方法优先查 MethodName（owner 匹配），字段查 StructField
             if let Some(n) = names.iter().find(|n| {
                 n.role == NameRole::MethodName && n.owner.as_deref() == Some(sname.as_str()) && n.name == word
@@ -52,7 +53,7 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
                 return to_defloc(&map, n.span, &n.name);
             }
         }
-        if let Ty::Object(_) = &recv {
+        if let Type::Object(_) = &recv {
             // 对象字面量字段：就近向上的同名键（owner 匹配赋值目标可消歧）
             let cur_line = cursor.line;
             let cand = |n: &NameTok| {
@@ -67,9 +68,9 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
         if word == "self" {
             // self → struct 声明名（接收者的 struct 或绑定链上的 self 类型）
             let sname = match &recv {
-                Ty::Struct(s) => Some(s.clone()),
+                Type::Struct(s, _) => Some(s.clone()),
                 _ => snap.scopes.iter().rev().find_map(|s| s.get("self")).and_then(|b| match &b.ty {
-                    Ty::Struct(s) => Some(s.clone()),
+                    Type::Struct(s, _) => Some(s.clone()),
                     _ => None,
                 }),
             }?;
@@ -109,7 +110,7 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
         if b.span != Span::default() {
             return to_defloc(&map, b.span, &word);
         }
-        if let Ty::Struct(sname) = &b.ty {
+        if let Type::Struct(sname, _) = &b.ty {
             let n = names.iter().find(|n| n.role == NameRole::StructName && n.name == *sname)?;
             return to_defloc(&map, n.span, &n.name);
         }

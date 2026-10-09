@@ -1,7 +1,8 @@
 //! 悬停信息构造：作用域绑定 / 内置全局 / 成员三个来源。
 
 use super::builtins;
-use super::infer::{self, Ty};
+use super::ty_view;
+use crate::checker::ty::Type;
 use super::scope::{self, ScopeSnapshot};
 use super::{Ctx, HoverInfo};
 
@@ -51,10 +52,12 @@ pub(super) fn builtin_global_info(word: &str) -> Option<HoverInfo> {
     None
 }
 
-/// 已知接收者类型的成员悬停
-pub(super) fn member_info(recv: &Ty, word: &str, ctx: &Ctx) -> Option<HoverInfo> {
+/// 已知接收者类型的成员悬停。联合接收者去 null 后单臂按该臂解析，
+/// 多臂无精确信息（返回 None 由调用方全池兜底）。
+pub(super) fn member_info(recv: &Type, word: &str, ctx: &Ctx) -> Option<HoverInfo> {
+    let recv = ty_view::member_recv(recv)?;
     match recv {
-        Ty::Namespace(ns) => {
+        Type::Namespace(ns) => {
             let fns = builtins::namespace_fns(ns)?;
             let f = fns.iter().find(|f| f.name == word)?;
             Some(HoverInfo {
@@ -62,7 +65,7 @@ pub(super) fn member_info(recv: &Ty, word: &str, ctx: &Ctx) -> Option<HoverInfo>
                 doc: f.doc.into(),
             })
         }
-        Ty::Struct(name) => {
+        Type::Struct(name, _) => {
             let info = ctx.structs.get(name)?;
             if let Some(f) = info.fields.iter().find(|p| p.name == word) {
                 let ty_str = match &f.ty {
@@ -75,17 +78,18 @@ pub(super) fn member_info(recv: &Ty, word: &str, ctx: &Ctx) -> Option<HoverInfo>
                 });
             }
             let m = info.methods.iter().find(|m| m.name == word)?;
-            let sig = infer::func_sig(&m.name, &m.params, m.ret.as_ref());
+            let sig = ty_view::func_sig(&m.name, &m.params, m.ret.as_ref());
             Some(HoverInfo {
                 signature: format!("**{}**", sig),
                 doc: format!("方法（impl {}）", name),
             })
         }
-        Ty::Object(fields) => {
-            let f = fields.iter().find(|f| f.name == word)?;
+        Type::Object(fields) => {
+            let f = fields.iter().find(|(n, _)| n == word)?;
+            let is_fn = matches!(f.1, Type::Func(_));
             Some(HoverInfo {
                 signature: format!("**{}.{}**", "对象", word),
-                doc: if f.is_fn { "方法字段（对象字面量）".into() } else { "字段（对象字面量）".into() },
+                doc: if is_fn { "方法字段（对象字面量）".into() } else { "字段（对象字面量）".into() },
             })
         }
         t => {

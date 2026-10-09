@@ -2,7 +2,8 @@
 //!
 //! **单一事实来源**：内置方法表 / 全局函数 / fs·sys 命名空间函数 / 内置类的
 //! 名字、签名串、文档与返回类型都以本表为准——analysis::builtins（补全/悬停）
-//! 经 analysis::bridge 桥接消费，editor 侧不得另建副本。
+//! 直接转发消费（类型表示已统一为 checker::ty::Type，无转换层），
+//! editor 侧不得另建副本。
 //! 修改内置库（src/natives）时只改这里（另有 editors/vscode 的 JS 静态降级表
 //! 需同步，见 AGENTS.md 的同步点清单；tests/builtins_consistency_test.rs 兜底）。
 //! 依赖方向纪律：checker 不依赖 analysis，本表使用 checker::ty::Type。

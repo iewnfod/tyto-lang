@@ -6,10 +6,8 @@
 //! 一切尽力而为：解析失败、类型推不出时回退静态表，绝不阻塞补全。
 
 pub mod builtins;
-mod bridge;
-pub mod infer;
-pub mod scope;
-pub mod semantics;
+pub mod ty_view;
+pub mod scope;pub mod semantics;
 pub mod tolerate;
 
 mod complete_items;
@@ -85,7 +83,7 @@ pub fn complete(src: &str, line0: usize, char_utf16: usize) -> Vec<CompleteItem>
     let registry_src = ambient.as_ref().unwrap_or(&patched.program);
     let structs = scope::collect_registry(registry_src);
 
-    let snap: ScopeSnapshot = scope::collect_at_cursor(
+    let mut snap: ScopeSnapshot = scope::collect_at_cursor(
         &patched.program,
         patched.sentinel,
         ambient.as_ref(),
@@ -93,7 +91,7 @@ pub fn complete(src: &str, line0: usize, char_utf16: usize) -> Vec<CompleteItem>
     );
 
     match mode {
-        CursorMode::Member => member_items(&snap),
+        CursorMode::Member => member_items(&mut snap),
         CursorMode::Type | CursorMode::Global => global_items(&snap),
     }
 }
@@ -122,11 +120,10 @@ pub fn hover(src: &str, line0: usize, char_utf16: usize) -> Option<HoverInfo> {
     let snap = scope::collect_at_cursor(&patched.program, patched.sentinel, ambient.as_ref(), &structs);
 
     if is_member {
-        // 接收者 = 哨兵 Member 的 target；解析不到接收者时回退查全池
-        if let Some(recv_expr) = &snap.receiver {
+        // 接收者类型已在快照期由引擎推出；解析不到接收者时回退查全池
+        if let Some(recv) = &snap.receiver_ty {
             let ctx = Ctx { scopes: &snap.scopes, structs: &snap.structs };
-            let recv = infer::infer(recv_expr, &ctx);
-            if let Some(info) = member_info(&recv, &word, &ctx) {
+            if let Some(info) = member_info(recv, &word, &ctx) {
                 return Some(info);
             }
         }

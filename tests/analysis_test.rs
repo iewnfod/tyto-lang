@@ -48,7 +48,7 @@ fn hover_at(src: &str) -> Option<tyto_lang::analysis::HoverInfo> {
 #[test]
 fn global_completion_includes_variables_with_types() {
     let items = complete_at("n = 42\ns = \"hi\"\narr = [1, 2]\n§");
-    for (name, detail) in [("n", "n: number"), ("s", "s: string"), ("arr", "arr: array")] {
+    for (name, detail) in [("n", "n: number"), ("s", "s: string"), ("arr", "arr: number[]")] {
         let item = find(&items, name).unwrap_or_else(|| panic!("缺 {name}"));
         assert_eq!(item.detail, detail);
         assert_eq!(item.kind, ItemKind::Variable);
@@ -211,6 +211,47 @@ fn member_completion_in_condition_headers() {
     let items = complete_at("s = \"abc\"\nfor c in s.§\n");
     assert!(find(&items, "split").is_some(), "for 迭代目标 string 方法");
 }
+// ============ 联合标注与泛型容器的成员补全 ============
+
+#[test]
+fn union_annotation_strips_null_single_arm() {
+    // number | null 去 null 后按 number：number 无方法 → 精确空集
+    let items = complete_at("x: number | null = null\nx.§");
+    assert!(find(&items, "map").is_none(), "number 臂不应给数组方法");
+    assert!(find(&items, "to_uppercase").is_none(), "number 臂不应给字符串方法");
+}
+
+#[test]
+fn union_annotation_member_intersection() {
+    // array | string：两臂共有 len；map / to_uppercase 非共有 → 不出现
+    let items = complete_at("x: array | string = null\nx.§");
+    assert!(find(&items, "len").is_some(), "两臂共有 len 应保留");
+    assert!(find(&items, "map").is_none(), "map 非两臂共有");
+    assert!(find(&items, "to_uppercase").is_none(), "to_uppercase 非两臂共有");
+}
+
+#[test]
+fn union_with_any_falls_back_to_all() {
+    // 含 any 臂的联合无法收窄：全池（与未知接收者行为一致）
+    let items = complete_at("x: any | null = null\nx.§");
+    assert!(find(&items, "map").is_some());
+    assert!(find(&items, "to_uppercase").is_some());
+}
+
+#[test]
+fn generic_map_annotation_members() {
+    // Map<string, number>：泛型实参不影响方法表分发，仍按 map 表给
+    let items = complete_at("m: Map<string, number> = new Map()\nm.§");
+    assert!(find(&items, "contains_key").is_some());
+    assert!(find(&items, "push").is_none(), "不应出现数组方法");
+}
+
+#[test]
+fn hover_map_annotated_member() {
+    let h = hover_at("m: Map<string, number> = new Map()\nm.get§(\"k\")").unwrap();
+    assert!(h.signature.contains("get"), "got {}", h.signature);
+}
+
 // ============ struct / 对象字面量成员 ============
 
 #[test]
@@ -307,7 +348,7 @@ fn multiline_chain_receiver() {
 fn annotation_takes_priority() {
     let items = complete_at("x: number[] = \"whatever\"\n§");
     let x = find(&items, "x").expect("缺 x");
-    assert_eq!(x.detail, "x: array", "标注优先于 RHS 推导");
+    assert_eq!(x.detail, "x: number[]", "标注优先于 RHS 推导");
 }
 
 #[test]

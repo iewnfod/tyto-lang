@@ -14,6 +14,7 @@
 pub mod assign;
 pub mod builtins;
 pub mod call;
+pub mod cursor;
 pub mod diag;
 pub mod infer;
 pub mod registry;

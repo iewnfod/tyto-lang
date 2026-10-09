@@ -7,10 +7,12 @@
 use std::collections::HashMap;
 
 use crate::analysis::builtins;
-use crate::analysis::infer::{self, Ty};
-use crate::analysis::scope::{self, Binding, Ctx, StructRegistry};
+use crate::analysis::ty_view::editor_display;
+use crate::analysis::scope::{self, Binding, StructRegistry};
 use crate::analysis::ItemKind;
 use crate::ast::{Expr, ForIter, Param, Stmt};
+use crate::checker::ty::Type;
+use crate::checker::{Binding as CkBinding, Checker};
 use crate::lexer::{Token, TokenKind};
 use crate::Span;
 
@@ -25,6 +27,9 @@ pub(super) struct Highlighter<'a> {
     pub(super) tok_pos: usize,
     pub(super) scopes: Vec<HashMap<String, Binding>>,
     pub(super) emitted: Vec<(Span, u32)>,
+    /// 引擎镜像链：与 scopes 成对操作（与 scope::Walker 同一模式），
+    /// 绑定类型与表达式推导单源到 checker 引擎
+    pub(super) ck: Checker,
 }
 
 impl<'a> Highlighter<'a> {
@@ -36,7 +41,7 @@ impl<'a> Highlighter<'a> {
                 stmt,
                 Stmt::Assign { .. } | Stmt::FuncDecl { .. } | Stmt::Struct { .. } | Stmt::Interface { .. }
             ) {
-                scope::register_leaf(self.structs, stmt, &mut self.scopes);
+                scope::register_leaf(&mut self.ck, stmt, &mut self.scopes);
             }
             self.walk_stmt(stmt);
         }
@@ -53,6 +58,7 @@ impl<'a> Highlighter<'a> {
             Stmt::If { cond, then_block, else_block, .. } => {
                 self.walk_expr(cond);
                 self.scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(then_block));
                 // else-if 的 else_block 是 If 语句而非 Block，直接 walk_stmt
                 if let Some(e) = else_block {
@@ -62,21 +68,21 @@ impl<'a> Highlighter<'a> {
             Stmt::While { cond, body, .. } => {
                 self.walk_expr(cond);
                 self.scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(body));
             }
             Stmt::ForIn { var, iter, body, .. } => {
                 self.scopes.push(HashMap::new());
-                // 元素类型：字符串迭代 → string，区间 → number，数组 → unknown（异构）
+                self.ck.push_scope();
+                // 元素类型：字符串迭代 → string，区间 → number，数组 → 元素类型
                 let elem = match iter {
-                    ForIter::Range { .. } => Ty::Number,
-                    ForIter::Expr(Expr::Str(..)) => Ty::Str,
-                    ForIter::Expr(e) => {
-                        let ctx = Ctx { scopes: &self.scopes, structs: self.structs };
-                        match infer::infer(e, &ctx) {
-                            Ty::Str => Ty::Str,
-                            _ => Ty::Unknown,
-                        }
-                    }
+                    ForIter::Range { .. } => Type::Number,
+                    ForIter::Expr(Expr::Str(..)) => Type::Str,
+                    ForIter::Expr(e) => match self.ck.infer(e) {
+                        Type::Str => Type::Str,
+                        Type::Array(el) => *el,
+                        _ => Type::Any,
+                    },
                 };
                 let vspan = loop_var_span(stmt);
                 self.bind_var(var, elem, vspan);
@@ -88,8 +94,8 @@ impl<'a> Highlighter<'a> {
             }
             Stmt::ForC { var, init, cond, step, body, .. } => {
                 self.scopes.push(HashMap::new());
-                let ctx = Ctx { scopes: &self.scopes, structs: self.structs };
-                let t = infer::infer(init, &ctx);
+                self.ck.push_scope();
+                let t = self.ck.infer(init);
                 let vspan = loop_var_span(stmt);
                 self.bind_var(var, t, vspan);
                 self.walk_expr(init);
@@ -112,6 +118,7 @@ impl<'a> Highlighter<'a> {
             Stmt::FuncDecl { params, ret, body, .. } => {
                 // 名字与参数 token 由扫描产出；这里压作用域绑参数，走函数体
                 self.scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.bind_params(params);
                 let _ = ret;
                 self.sync_to(body.span());
@@ -122,16 +129,21 @@ impl<'a> Highlighter<'a> {
                     if let Stmt::FuncDecl { name, params, ret, body, .. } = m {
                         self.sync_to(m.span());
                         self.scopes.push(HashMap::new());
+                        self.ck.push_scope();
                         self.scopes.last_mut().unwrap().insert(
                             "self".into(),
                             Binding {
                                 name: "self".into(),
-                                ty: Ty::Struct(target.clone()),
+                                ty: Type::Struct(target.clone(), Vec::new()),
                                 kind: ItemKind::Variable,
                                 detail: format!("self: {}", target),
                                 doc: String::new(),
                                 span: Span::default(),
                             },
+                        );
+                        self.ck.define(
+                            "self",
+                            CkBinding::plain(Type::Struct(target.clone(), Vec::new())),
                         );
                         self.bind_params(params);
                         let _ = name;
@@ -146,14 +158,16 @@ impl<'a> Highlighter<'a> {
             }
             Stmt::Block { .. } => {
                 self.scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.walk_stmts(top_stmts(stmt));
             }
             _ => {}
         }
     }
 
-    fn bind_var(&mut self, name: &str, ty: Ty, span: Span) {
-        let detail = format!("{}: {}", name, ty.display());
+    fn bind_var(&mut self, name: &str, ty: Type, span: Span) {
+        let detail = format!("{}: {}", name, editor_display(&ty));
+        self.ck.define(name, CkBinding::plain(ty.clone()));
         self.scopes.last_mut().unwrap().insert(
             name.to_string(),
             Binding {
@@ -168,14 +182,15 @@ impl<'a> Highlighter<'a> {
     }
 
     fn bind_params(&mut self, params: &[Param]) {
-        let frame = self.scopes.last_mut().unwrap();
         for p in params {
             let ty = p
                 .ty
                 .as_ref()
-                .map(|a| infer::ty_from_ast(a, self.structs))
-                .unwrap_or(Ty::Unknown);
-            let detail = format!("{}: {}", p.name, ty.display());
+                .map(|a| crate::analysis::ty_view::ty_from_ast(a, self.structs))
+                .unwrap_or(Type::Any);
+            let detail = format!("{}: {}", p.name, editor_display(&ty));
+            self.ck.define(&p.name, CkBinding::plain(ty.clone()));
+            let frame = self.scopes.last_mut().unwrap();
             frame.insert(
                 p.name.clone(),
                 Binding {
@@ -285,6 +300,7 @@ impl<'a> Highlighter<'a> {
                 // 匿名函数体：独立作用域（参数 token 由扫描产出）
                 self.sync_to(body.span());
                 self.scopes.push(HashMap::new());
+                self.ck.push_scope();
                 self.bind_params(params);
                 self.walk_stmts(top_stmts(body));
             }
@@ -316,13 +332,15 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    /// 成员名分类：按接收者推导（method / property / namespace 函数）
-    fn classify_member(&self, target: &Expr, name: &str) -> Option<u32> {
-        let ctx = Ctx { scopes: &self.scopes, structs: self.structs };
-        let recv = infer::infer(target, &ctx);
-        match &recv {
-            Ty::Namespace(_) => Some(2), // fs.read_file / sys.shell → function
-            Ty::Struct(s) => {
+    /// 成员名分类：按接收者推导（method / property / namespace 函数）。
+    /// 推导经引擎镜像链（与 walker 同一模式）；联合接收者去 null 后单臂
+    /// 按该臂分类，多臂宁可少色不可错色。
+    fn classify_member(&mut self, target: &Expr, name: &str) -> Option<u32> {
+        let recv = self.ck.infer(target);
+        let recv = crate::analysis::ty_view::member_recv(&recv)?;
+        match recv {
+            Type::Namespace(_) => Some(2), // fs.read_file / sys.shell → function
+            Type::Struct(s, _) => {
                 let info = self.structs.get(s)?;
                 if info.methods.iter().any(|m| m.name == *name) {
                     Some(3)
@@ -332,10 +350,10 @@ impl<'a> Highlighter<'a> {
                     None
                 }
             }
-            Ty::Object(fields) => fields
+            Type::Object(fields) => fields
                 .iter()
-                .find(|f| f.name == *name)
-                .map(|f| if f.is_fn { 3 } else { 4 }),
+                .find(|(n, _)| n == name)
+                .map(|(_, t)| if matches!(t, Type::Func(_)) { 3 } else { 4 }),
             // 内置容器类型的方法；字段访问（不太可能）不发
             t if builtins::methods_for(t).is_some() => {
                 if builtins::methods_for(t)?.iter().any(|m| *m.name == *name) {

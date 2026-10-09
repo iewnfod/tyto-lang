@@ -6,18 +6,18 @@
 //! - checker 全局函数必须能从 analysis 侧查到完整签名与文档。
 
 use tyto_lang::analysis::builtins;
-use tyto_lang::analysis::infer::Ty;
 use tyto_lang::checker;
+use tyto_lang::checker::ty::Type;
 
-fn probe_tys() -> Vec<Ty> {
+fn probe_tys() -> Vec<Type> {
     vec![
-        Ty::Array,
-        Ty::Str,
-        Ty::Map,
-        Ty::MaxHeap,
-        Ty::MinHeap,
-        Ty::Stack,
-        Ty::Queue,
+        Type::Array(Box::new(Type::Any)),
+        Type::Str,
+        Type::Map(Box::new(Type::Any), Box::new(Type::Any)),
+        Type::MaxHeap,
+        Type::MinHeap,
+        Type::Stack,
+        Type::Queue,
     ]
 }
 
@@ -82,11 +82,11 @@ fn method_tables_complete() {
     assert!(!builtins::all_methods().is_empty());
 }
 
-/// 桥接往返：内置容器类型的编辑器 → checker → 编辑器不丢类别
+/// 方法表直查：每种内置接收者的 len 都返回 number（类型表示已单源，无桥接层）
 #[test]
-fn bridge_keeps_builtin_kinds() {
+fn builtin_method_returns_keep_kinds() {
     for ty in probe_tys() {
         let back = builtins::method_return(&ty, "len");
-        assert_eq!(back, Some(Ty::Number), "{ty:?}.len 应桥接为 number");
+        assert_eq!(back, Some(Type::Number), "{ty:?}.len 应为 number");
     }
 }
