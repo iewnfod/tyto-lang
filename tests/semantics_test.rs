@@ -292,3 +292,146 @@ fn definition_var_inside_function_via_heuristic() {
     let d = def(src, 2, 4).unwrap();
     assert_eq!(d.line, 0, "h → 顶层声明（启发式下仍是首个声明处）");
 }
+
+// ============ 泛型参数跳转 ============
+
+#[test]
+fn definition_type_param_jumps_to_impl_decl() {
+    let src = "\
+impl TreeNode<T> {
+    function new(val: T) {
+        self.val = val
+    }
+}
+";
+    // val: T 的 T（行1 col 22）→ impl 头部 <T>（行0 col 14）
+    let d = def(src, 1, 22).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 14, 1), "T → impl 头部 <T> 声明处");
+    // 方法体内引用同名参数 val → 参数声明处（泛型函数此前扫描不到参数）
+    let d = def(src, 2, 19).unwrap();
+    assert_eq!((d.line, d.col, d.len), (1, 17, 3), "val → 泛型方法参数声明");
+}
+
+#[test]
+fn definition_type_param_prefers_nearest_decl() {
+    let src = "\
+impl Box<T> {
+    function pair<K>(a: K) {
+        return a
+    }
+    function get(v: T) {
+        return v
+    }
+}
+";
+    // 方法自带 <K>：a: K 的 K（行1 col 24）→ 方法头 <K>（行1 col 18）
+    let d = def(src, 1, 24).unwrap();
+    assert_eq!((d.line, d.col, d.len), (1, 18, 1), "K → 方法自己的 <K>（就近遮蔽）");
+    // 无自带泛型的方法：v: T 的 T（行4 col 20）→ impl 头 <T>（行0 col 9）
+    let d = def(src, 4, 20).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 9, 1), "T → impl 的 <T>");
+}
+
+#[test]
+fn definition_type_param_in_struct_field_and_args() {
+    let src = "\
+struct TreeNode<T> {
+    val: T,
+    left: TreeNode<T> | null,
+}
+";
+    // 字段标注 val: T 的 T → struct 头 <T>
+    let d = def(src, 1, 9).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 16, 1), "字段类型 T → struct <T>");
+    // 泛型实参 TreeNode<T> 里的 T → 同一个声明
+    let d = def(src, 2, 19).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 16, 1), "泛型实参 T → struct <T>");
+}
+
+#[test]
+fn definition_type_param_in_generic_function() {
+    let src = "function id<T>(x: T) -> T {\n    return x\n}\n";
+    // 参数标注 x: T 的 T（行0 col 18）→ 头部 <T>（行0 col 12）
+    let d = def(src, 0, 18).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 12, 1), "T → 函数 <T>");
+    // 体内 x → 参数声明处（泛型函数此前不扫描参数）
+    let d = def(src, 1, 11).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 15, 1), "x → 泛型函数参数声明");
+    // 匿名泛型 function<T>(x: T)
+    let src2 = "f = function<T>(x: T) -> T {\n    return x\n}\n";
+    let d = def(src2, 0, 19).unwrap();
+    assert_eq!((d.line, d.col, d.len), (0, 13, 1), "匿名函数 T → <T>");
+}
+
+#[test]
+fn definition_type_param_undeclared_returns_none() {
+    // 没有任何泛型声明：非法的裸 T 不跳转，但不影响其他符号照常解析
+    let src = "function g(v: T) {\n    return v\n}\n";
+    assert!(def(src, 0, 14).is_none(), "未声明的 T 不跳转");
+    assert!(def(src, 1, 11).is_some(), "参数 v 照常跳");
+}
+
+// ============ 类型标注着色 ============
+
+#[test]
+fn colors_type_annotations_everywhere() {
+    let src = "\
+x: number = 1
+function add(a: number, b: number) -> number {
+    return a + b
+}
+struct ListNode {
+    val,
+    next: ListNode
+}
+m: Map<string, number> = new Map()
+";
+    let m = token_map(src);
+    // 行0：变量标注
+    assert_eq!(m.get(&(0, 3)), Some(&"type"), "变量标注 number");
+    // 行1：参数标注 ×2 + 返回类型
+    assert_eq!(m.get(&(1, 16)), Some(&"type"), "参数 a 的类型");
+    assert_eq!(m.get(&(1, 27)), Some(&"type"), "参数 b 的类型");
+    assert_eq!(m.get(&(1, 38)), Some(&"type"), "返回类型");
+    // 行6：struct 字段标注
+    assert_eq!(m.get(&(6, 10)), Some(&"type"), "字段类型 ListNode");
+    // 行8：泛型参数逐个标识符着色
+    assert_eq!(m.get(&(8, 3)), Some(&"type"), "Map");
+    assert_eq!(m.get(&(8, 7)), Some(&"type"), "string");
+    assert_eq!(m.get(&(8, 15)), Some(&"type"), "number");
+    // 行8：`new Map()` 的 Map 仍是 class，不被标注干扰
+    assert_eq!(m.get(&(8, 29)), Some(&"class"), "new Map 保持 class");
+}
+
+#[test]
+fn colors_types_in_interface_and_anonymous_function() {
+    let src = "\
+interface Shape {
+    function area() -> number
+}
+f = function(a: number) -> number {
+    return a
+}
+";
+    let m = token_map(src);
+    assert_eq!(m.get(&(1, 13)), Some(&"method"), "接口方法 area");
+    assert_eq!(m.get(&(1, 23)), Some(&"type"), "接口方法返回类型");
+    assert_eq!(m.get(&(3, 13)), Some(&"parameter"), "匿名函数参数 a");
+    assert_eq!(m.get(&(3, 16)), Some(&"type"), "匿名函数参数类型");
+    assert_eq!(m.get(&(3, 27)), Some(&"type"), "匿名函数返回类型");
+}
+
+#[test]
+fn no_type_tokens_in_value_positions() {
+    // 对象字面量值 / 三元分支：`:` 后是值不是类型，一个 type 都不该发
+    let src = "\
+o = { a: 1, b: \"s\" }
+q = { c: o }
+c = true ? x : y
+";
+    let m = token_map(src);
+    assert!(
+        !m.values().any(|&v| v == "type"),
+        "值位置不应有 type token：{m:?}"
+    );
+}

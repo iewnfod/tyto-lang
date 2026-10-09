@@ -17,15 +17,19 @@ pub struct Settings {
     dump_ast: bool,
     show_time: bool,
     lsp: bool,
+    check: bool,
+    no_check: bool,
 }
 
 /// 解析 argv 得到的执行指令
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Repl,
-    RunScript { path: String, script_args: Vec<String>, time: bool },
+    RunScript { path: String, script_args: Vec<String>, time: bool, skip_check: bool },
     DumpTokens { path: String },
     DumpAst { path: String },
+    /// `tyto check file.tyto`：类型检查（不执行），有 Error 退出码 1
+    Check { path: String },
     /// `tyto lsp`：stdio 语言服务器（编辑器插件用）
     Lsp,
 }
@@ -57,6 +61,10 @@ fn set_dump_ast(s: &mut Settings, _: &[String]) {
 
 fn set_show_time(s: &mut Settings, _: &[String]) {
     s.show_time = true;
+}
+
+fn set_no_check(s: &mut Settings, _: &[String]) {
+    s.no_check = true;
 }
 
 fn show_help(_: &mut Settings, _: &[String]) {
@@ -91,6 +99,14 @@ const OPTIONS: &[Opt] = &[
         description: "Print elapsed time after the script finishes",
         value_num: 0,
         run: set_show_time,
+        exit_after: false,
+    },
+    Opt {
+        short: "-n",
+        long: "--no-check",
+        description: "Skip the type checker when running a script",
+        value_num: 0,
+        run: set_no_check,
         exit_after: false,
     },
     Opt {
@@ -140,6 +156,9 @@ pub fn parse(argv: &[String]) -> Command {
             // 子命令风格：首个位置参数为 `lsp` → 语言服务器。
             // 真有脚本叫 lsp 时用 `./lsp` 或放在 `--` 之后即可区分。
             settings.lsp = true;
+        } else if arg == "check" && file.is_none() && script_args.is_empty() {
+            // 子命令风格：`tyto check file.tyto` → 仅类型检查不执行。
+            settings.check = true;
         } else {
             push_positional(arg, &mut file, &mut script_args);
         }
@@ -147,10 +166,17 @@ pub fn parse(argv: &[String]) -> Command {
     }
 
     match file {
+        Some(path) if settings.check => Command::Check { path },
         // 两个调试开关都给时 --tokens 优先
         Some(path) if settings.dump_tokens => Command::DumpTokens { path },
         Some(path) if settings.dump_ast => Command::DumpAst { path },
-        Some(path) => Command::RunScript { path, script_args, time: settings.show_time },
+        Some(path) => Command::RunScript {
+            path,
+            script_args,
+            time: settings.show_time,
+            skip_check: settings.no_check,
+        },
+        None if settings.check => missing_file("check"),
         None if settings.dump_tokens => missing_file("--tokens"),
         None if settings.dump_ast => missing_file("--ast"),
         None if settings.lsp => Command::Lsp,
@@ -172,10 +198,12 @@ fn print_help() {
     println!("tyto — Tyto language interpreter v{}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage: tyto [file.tyto] [options] [-- script_args...]");
-    println!("       tyto lsp                (stdio language server for editors)");
+    println!("       tyto check file.tyto     (type-check only, exit 1 on errors)");
+    println!("       tyto lsp                 (stdio language server for editors)");
     println!();
     println!("  With no arguments, starts the REPL; arguments after <file> are passed to the script via sys.args()");
     println!("  Arguments after `--` are never parsed as options and are passed to the script as-is");
+    println!("  Type errors are advisory: `tyto run` prints them to stderr but still executes (use --no-check to skip)");
     println!();
     println!("Options:");
     let width = OPTIONS.iter().map(|o| o.long.len()).max().unwrap_or(0);
@@ -229,14 +257,15 @@ mod tests {
     fn first_positional_is_script_rest_are_args() {
         assert_eq!(
             parse_args(&["s.tyto"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: false }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: false, skip_check: false }
         );
         assert_eq!(
             parse_args(&["s.tyto", "a", "b"]),
             Command::RunScript {
                 path: "s.tyto".into(),
                 script_args: vec!["a".into(), "b".into()],
-                time: false
+                time: false,
+                skip_check: false
             }
         );
     }
@@ -261,11 +290,11 @@ mod tests {
     fn time_flag_long_and_short_anywhere() {
         assert_eq!(
             parse_args(&["--time", "s.tyto"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true, skip_check: false }
         );
         assert_eq!(
             parse_args(&["s.tyto", "-T"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec![], time: true, skip_check: false }
         );
         // 不影响调试开关
         assert_eq!(
@@ -282,6 +311,7 @@ mod tests {
                 path: "s.tyto".into(),
                 script_args: vec!["-t".into(), "b".into()],
                 time: false,
+                skip_check: false,
             }
         );
     }
@@ -292,11 +322,36 @@ mod tests {
     }
 
     #[test]
+    fn check_subcommand_and_no_check_flag() {
+        // `tyto check file.tyto` → Check
+        assert_eq!(parse_args(&["check", "f.tyto"]), Command::Check { path: "f.tyto".into() });
+        // `check` 在文件之后出现时只是普通脚本参数
+        assert_eq!(
+            parse_args(&["f.tyto", "check"]),
+            Command::RunScript {
+                path: "f.tyto".into(),
+                script_args: vec!["check".into()],
+                time: false,
+                skip_check: false,
+            }
+        );
+        // --no-check / -n 透传到 RunScript
+        assert_eq!(
+            parse_args(&["--no-check", "f.tyto"]),
+            Command::RunScript { path: "f.tyto".into(), script_args: vec![], time: false, skip_check: true }
+        );
+        assert_eq!(
+            parse_args(&["f.tyto", "-n"]),
+            Command::RunScript { path: "f.tyto".into(), script_args: vec![], time: false, skip_check: true }
+        );
+    }
+
+    #[test]
     fn script_named_lsp_still_runs_after_flag() {
         // 文件先出现时 `lsp` 只是普通脚本参数
         assert_eq!(
             parse_args(&["s.tyto", "lsp"]),
-            Command::RunScript { path: "s.tyto".into(), script_args: vec!["lsp".into()], time: false }
+            Command::RunScript { path: "s.tyto".into(), script_args: vec!["lsp".into()], time: false, skip_check: false }
         );
         // `--` 之后不解析选项，`lsp` 原样传给脚本
         assert_eq!(
@@ -305,6 +360,7 @@ mod tests {
                 path: "s.tyto".into(),
                 script_args: vec!["lsp".into()],
                 time: false,
+                skip_check: false,
             }
         );
     }

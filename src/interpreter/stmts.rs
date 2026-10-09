@@ -20,8 +20,8 @@ impl Interpreter {
                 self.evaluate(expr)?;
                 Ok(Flow::Normal)
             }
-            Stmt::Assign { target, op, value, span, .. } => {
-                self.exec_assign(target, *op, value, *span)
+            Stmt::Assign { target, op, value, decl, span, .. } => {
+                self.exec_assign(target, *op, value, *decl, *span)
             }
             Stmt::If { cond, then_block, else_block, .. } => {
                 let c = self.evaluate(cond)?;
@@ -60,8 +60,8 @@ impl Interpreter {
             Stmt::Break(_) => Ok(Flow::Break),
             Stmt::Continue(_) => Ok(Flow::Continue),
             Stmt::Block { stmts, .. } => self.exec_block(stmts),
-            Stmt::Struct { name, fields, span } => {
-                // 字段查重：重复声明直接报错（typo 早暴露）；类型标注仅文档性质，这里丢弃
+            Stmt::Struct { name, fields, span, .. } => {
+                // 字段查重：重复声明直接报错（typo 早暴露）；类型标注运行时擦除，这里丢弃
                 let names: Vec<String> = Param::names(fields);
                 let mut seen = std::collections::HashSet::new();
                 for f in &names {
@@ -80,7 +80,7 @@ impl Interpreter {
                 scope::define(&self.scope, name, def);
                 Ok(Flow::Normal)
             }
-            Stmt::Impl { target, methods, span } => {
+            Stmt::Impl { target, methods, span, .. } => {
                 let def = scope::get(&self.scope, target).map_err(|e| e.with_span(*span))?;
                 let Value::Struct(def) = def else {
                     return Err(RtError::runtime(
@@ -104,12 +104,14 @@ impl Interpreter {
             }
             Stmt::Interface { name, methods, span } => {
                 let _ = span;
+                // 运行时 `is` 检查只看方法名；参数/返回类型由 checker 消费
+                let names: Vec<String> = methods.iter().map(|m| m.name.clone()).collect();
                 scope::define(
                     &self.scope,
                     name,
                     Value::Interface(Rc::new(InterfaceObj {
                         name: name.clone(),
-                        methods: methods.clone(),
+                        methods: names,
                     })),
                 );
                 Ok(Flow::Normal)
@@ -138,16 +140,34 @@ impl Interpreter {
         result
     }
 
-    fn exec_assign(&mut self, target: &Expr, op: AssignOp, value: &Expr, span: Span) -> RtResult<Flow> {
+    fn exec_assign(
+        &mut self,
+        target: &Expr,
+        op: AssignOp,
+        value: &Expr,
+        decl: Option<crate::ast::DeclKind>,
+        span: Span,
+    ) -> RtResult<Flow> {
         match target {
             Expr::Ident(name, _) => {
+                // let/const 声明：总在当前作用域建立新绑定（const 额外登记常量）
+                if let Some(kind) = decl {
+                    let v = self.assigned_value(AssignOp::Set, None, value, span)?;
+                    match kind {
+                        crate::ast::DeclKind::Const => {
+                            scope::define_const(&self.scope, name, v)
+                        }
+                        crate::ast::DeclKind::Let => scope::define(&self.scope, name, v),
+                    }
+                    return Ok(Flow::Normal);
+                }
                 let old = if op != AssignOp::Set {
                     Some(scope::get(&self.scope, name).map_err(|e| e.with_span(span))?)
                 } else {
                     None
                 };
                 let v = self.assigned_value(op, old, value, span)?;
-                scope::assign(&self.scope, name, v);
+                scope::assign(&self.scope, name, v).map_err(|e| e.with_span(span))?;
                 Ok(Flow::Normal)
             }
             Expr::Index { target, index, .. } => {
@@ -289,7 +309,8 @@ impl Interpreter {
                     if !cont {
                         break;
                     }
-                    scope::assign(&self.scope, var, Value::Num(i));
+                    scope::assign(&self.scope, var, Value::Num(i))
+                        .map_err(|e| e.with_span(body.span()))?;
                     match self.execute(body)? {
                         Flow::Break => break,
                         Flow::Return(v) => return Ok(Flow::Return(v)),
@@ -313,7 +334,8 @@ impl Interpreter {
                                 }
                             };
                             let Some(item) = next else { break };
-                            scope::assign(&self.scope, var, item);
+                            scope::assign(&self.scope, var, item)
+                        .map_err(|e| e.with_span(body.span()))?;
                             match self.execute(body)? {
                                 Flow::Break => break,
                                 Flow::Return(v) => return Ok(Flow::Return(v)),
@@ -324,7 +346,8 @@ impl Interpreter {
                     }
                     Value::Str(s) => {
                         for c in s.chars() {
-                            scope::assign(&self.scope, var, Value::Str(c.to_string()));
+                            scope::assign(&self.scope, var, Value::Str(c.to_string()))
+                        .map_err(|e| e.with_span(body.span()))?;
                             match self.execute(body)? {
                                 Flow::Break => break,
                                 Flow::Return(v) => return Ok(Flow::Return(v)),

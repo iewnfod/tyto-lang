@@ -37,6 +37,7 @@ fn operator_table() -> &'static [(&'static str, TokenKind)] {
         (">", Gt),
         ("=", Assign),
         ("!", Not),
+        ("|", Pipe),
         (".", Dot),
         ("?", Question),
         (":", Colon),
@@ -531,6 +532,29 @@ mod tests {
         let ks = kinds("a ? b : c").unwrap();
         assert_eq!(ks[1], Question);
         assert_eq!(ks[3], Colon);
+    }
+
+    #[test]
+    fn pipe_token() {
+        // `|` 单独成 token（类型联合用）；`||` 仍是逻辑或（最长匹配优先）
+        let ks = kinds("a | b").unwrap();
+        assert_eq!(ks[..3], [Ident("a".into()), Pipe, Ident("b".into())]);
+        let ks = kinds("a || b").unwrap();
+        assert_eq!(ks[..3], [Ident("a".into()), OrOr, Ident("b".into())]);
+        let ks = kinds("a |=").unwrap();
+        assert_eq!(ks[1], Pipe); // 不存在 |=，`=` 独立
+        assert_eq!(ks[2], Assign);
+    }
+
+    #[test]
+    fn let_const_keywords() {
+        let ks = kinds("let x = 1").unwrap();
+        assert_eq!(ks[0], Keyword(Keyword::Let));
+        let ks = kinds("const y = 2").unwrap();
+        assert_eq!(ks[0], Keyword(Keyword::Const));
+        // 不再是普通标识符
+        let ks = kinds("let").unwrap();
+        assert_eq!(ks[0], Keyword(Keyword::Let));
     }
 
     #[test]

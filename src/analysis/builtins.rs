@@ -63,6 +63,21 @@ pub const CONSTANTS: &[(&str, &str, &str)] = &[
     ("sys", "sys.*", "系统命名空间：shell / get_env / args"),
 ];
 
+/// 类型标注可用名（与 infer::ty_from_annotation / Ty::from_type_name 对齐）。
+/// 用户 struct / interface 由分析层追加（见 analysis::type_items）。
+pub const TYPES: &[(&str, &str, &str)] = &[
+    ("number", "number", "数字类型"),
+    ("string", "string", "字符串类型"),
+    ("bool", "bool", "布尔类型（也接受 boolean 写法）"),
+    ("array", "array", "数组类型；元素类型可加 `[]` 后缀标注，如 number[]"),
+    ("map", "map", "映射类型"),
+    ("object", "object", "对象字面量类型"),
+    ("function", "function", "函数类型"),
+    ("any", "any", "任意类型（标注缺省值）"),
+    ("Array", "Array", "array 的别名写法"),
+    ("Map", "Map<K, V>", "保序哈希表类型，如 Map<string, number>"),
+];
+
 const ARRAY_METHODS: &[MethodSig] = &[
     MethodSig { name: "push", sig: ".push(x, ...) → number", doc: "追加所有参数，返回新长度", ret: Ty::Number },
     MethodSig { name: "pop", sig: ".pop() → value", doc: "移除并返回末尾元素；空数组返回 null", ret: Ty::Unknown },

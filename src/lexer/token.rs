@@ -35,6 +35,8 @@ pub enum TokenKind {
     AndAnd,
     OrOr,
     Not,
+    /// `|`：仅用于类型联合（`A | B`），不是位或运算符
+    Pipe,
     // 其它符号
     Arrow,
     Dot,
@@ -97,6 +99,8 @@ pub enum Keyword {
     Impl,
     Interface,
     Is,
+    Let,
+    Const,
 }
 
 impl Keyword {
@@ -119,6 +123,8 @@ impl Keyword {
             "impl" => Keyword::Impl,
             "interface" => Keyword::Interface,
             "is" => Keyword::Is,
+            "let" => Keyword::Let,
+            "const" => Keyword::Const,
             _ => return None,
         })
     }
@@ -142,6 +148,8 @@ impl Keyword {
             Keyword::Impl => "impl",
             Keyword::Interface => "interface",
             Keyword::Is => "is",
+            Keyword::Let => "let",
+            Keyword::Const => "const",
         }
     }
 }

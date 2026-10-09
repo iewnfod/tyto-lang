@@ -98,16 +98,19 @@ impl<'s> SourceMap<'s> {
     }
 }
 
-/// 补全模式：成员访问（`.` / `?.` 后）或全局
+/// 补全模式：成员访问（`.` / `?.` 后）、类型标注（`:` / `->` 后）或全局
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CursorMode {
     Member,
+    Type,
     Global,
 }
 
 /// 光标前文本的模式判定 + 哨兵插入点 + 光标词末尾（字节偏移）。
 /// `insert_at`：哨兵插入处（成员 = `.` 后；全局 = 光标词首，避免劫持后半句）；
 /// `rest_at`：光标词末尾——补丁保留其后原文，词整体被哨兵替换、语句保持完整。
+/// 类型模式的哨兵行为与全局一致（`type_context` 复核后走独立的类型补全，
+/// 不过检时 hover/定义仍按全局路径处理）。
 pub fn cursor_mode_and_insert(src: &str, cursor_offset: usize) -> (CursorMode, usize, usize) {
     let prefix = &src[..cursor_offset];
     let bytes = prefix.as_bytes();
@@ -119,6 +122,8 @@ pub fn cursor_mode_and_insert(src: &str, cursor_offset: usize) -> (CursorMode, u
     let trimmed = prefix[..i].trim_end();
     let mode = if trimmed.ends_with("?.") || (trimmed.ends_with('.') && !trimmed.ends_with("..")) {
         CursorMode::Member
+    } else if trimmed.ends_with("->") || trimmed.ends_with(':') {
+        CursorMode::Type
     } else {
         CursorMode::Global
     };
@@ -130,15 +135,102 @@ pub fn cursor_mode_and_insert(src: &str, cursor_offset: usize) -> (CursorMode, u
     }
     match mode {
         CursorMode::Member => (mode, trimmed.len(), rest_at),
-        CursorMode::Global => (mode, i, rest_at),
+        CursorMode::Type | CursorMode::Global => (mode, i, rest_at),
     }
 }
 
-/// 哨兵文本：成员模式直接拼接；全局模式换行独立成句
+/// 哨兵文本：成员模式直接拼接；全局/类型模式换行独立成句
 pub fn sentinel_text(mode: CursorMode) -> String {
     match mode {
         CursorMode::Member => SENTINEL.to_string(),
-        CursorMode::Global => format!("\n{SENTINEL}"),
+        CursorMode::Type | CursorMode::Global => format!("\n{SENTINEL}"),
+    }
+}
+
+/// 光标是否真处于类型标注位置（`:` / `->` 之后，供类型补全）。
+///
+/// [`cursor_mode_and_insert`] 只看前缀结尾，这里做两层复核（基于前缀的 token 流）：
+/// - `->` 结尾必为返回类型（语言里 `->` 只用于返回标注）；
+/// - `:` 结尾需排除两种"值位置"：
+///   1. 三元表达式 `c ? a : b`（`?` 与 `:` 未配对）；
+///   2. 对象字面量 `{ k: v }`（最内层未闭合的 `{` 前驱是 `= ( [ , : ? return`
+///      之一 → 是对象字面量，`:` 后是值不是类型）。
+/// 词法失败时保守返回 false（回退全局补全）。
+pub fn type_context(src: &str, cursor_offset: usize) -> bool {
+    let prefix = &src[..cursor_offset];
+    let bytes = prefix.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+        i -= 1;
+    }
+    let trimmed = prefix[..i].trim_end();
+    if trimmed.ends_with("->") {
+        return true;
+    }
+    if !trimmed.ends_with(':') {
+        return false;
+    }
+
+    let Ok(out) = lex_tolerant(prefix) else {
+        return false;
+    };
+    let toks = &out.tokens;
+
+    // 三元排除：光标前的这个冒号若还要去配对更早的 `?`，就是三元的假分支
+    //（只看最后一个 Colon 之前的 `?` 深度；`?.` / `??` 是独立 token 不参与）
+    let Some(colon_idx) = toks.iter().rposition(|t| t.kind == TokenKind::Colon) else {
+        return false;
+    };
+    let mut qdepth = 0i32;
+    for t in &toks[..colon_idx] {
+        match t.kind {
+            TokenKind::Question => qdepth += 1,
+            TokenKind::Colon if qdepth > 0 => qdepth -= 1,
+            _ => {}
+        }
+    }
+    if qdepth > 0 {
+        return false;
+    }
+
+    // 最内层未闭合的开括号（词法前缀以未闭合状态收尾是常态）
+    let mut openers: Vec<usize> = Vec::new();
+    for (idx, t) in toks.iter().enumerate() {
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => openers.push(idx),
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                openers.pop();
+            }
+            _ => {}
+        }
+    }
+    match openers.last().map(|&idx| &toks[idx].kind) {
+        // 括号内：函数/方法参数列表（对象字面量在括号里必带 `{}`，不冲突）
+        Some(TokenKind::LParen) => true,
+        // `{`：前驱决定对象字面量还是块/struct 体
+        Some(TokenKind::LBrace) => {
+            let opener_idx = *openers.last().unwrap();
+            let prev = opener_idx
+                .checked_sub(1)
+                .and_then(|i| toks.get(i))
+                .map(|t| &t.kind);
+            !matches!(
+                prev,
+                Some(
+                    TokenKind::Assign
+                        | TokenKind::LParen
+                        | TokenKind::LBracket
+                        | TokenKind::Comma
+                        | TokenKind::Colon
+                        | TokenKind::Question
+                        | TokenKind::Keyword(crate::lexer::Keyword::Return)
+                )
+            )
+        }
+        // 顶层语句（无开括号）：`x: T = ...` 标注
+        None => true,
+        // 数组字面量内没有 `:` 标注形态
+        _ => false,
     }
 }
 

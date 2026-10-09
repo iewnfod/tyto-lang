@@ -6,6 +6,10 @@
         { "include": "#comments" },
         { "include": "#strings" },
         { "include": "#function-decl" },
+        { "include": "#struct-decl" },
+        { "include": "#impl-decl" },
+        { "include": "#return-type" },
+        { "include": "#var-type-annotation" },
         { "include": "#numbers" },
         { "include": "#keywords" },
         { "include": "#self" },
@@ -56,11 +60,121 @@
             ]
         },
         "function-decl": {
-            "comment": "function 声明：函数名高亮",
-            "match": "\\b(function)\\s+([A-Za-z_][A-Za-z0-9_]*)",
-            "captures": {
+            "comment": "function 声明：关键字 + 可选泛型参数 <T, U> + 函数名 + 参数列表（参数名 variable.parameter；`: T` 类型标注 entity.name.type）。匿名泛型 function<T>(...) 同样覆盖",
+            "begin": "\\b(function)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(?:(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)\\s*)?(\\()",
+            "beginCaptures": {
                 "1": { "name": "storage.type.function.tyto" },
-                "2": { "name": "entity.name.function.tyto" }
+                "2": { "name": "entity.name.function.tyto" },
+                "3": { "name": "punctuation.definition.typeparameters.begin.tyto" },
+                "4": { "name": "entity.name.type.parameter.tyto" },
+                "5": { "name": "punctuation.definition.typeparameters.end.tyto" },
+                "6": { "name": "punctuation.definition.parameters.begin.tyto" }
+            },
+            "end": "\\)",
+            "endCaptures": {
+                "0": { "name": "punctuation.definition.parameters.end.tyto" }
+            },
+            "patterns": [
+                {
+                    "name": "variable.parameter.tyto",
+                    "match": "[A-Za-z_][A-Za-z0-9_]*(?=\\s*[:,)])"
+                },
+                {
+                    "comment": "参数类型标注：`: T`（到 `,` / `)` 为止；T 可带泛型与 [] 后缀）",
+                    "begin": ":",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.separator.annotation.tyto" }
+                    },
+                    "end": "(?=[,)])",
+                    "patterns": [
+                        { "include": "#type-expr" }
+                    ]
+                }
+            ]
+        },
+        "type-expr": {
+            "comment": "类型表达式：标识符全部着 entity.name.type，泛型实参 <...> 递归展开（内部的 , 不会截断外层标注），其余类型标点着 punctuation",
+            "patterns": [
+                {
+                    "comment": "泛型实参列表：begin/end 整体消费，内部递归 type-expr",
+                    "begin": "<",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.type.tyto" }
+                    },
+                    "end": ">|(?=$)",
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.type.tyto" }
+                    },
+                    "patterns": [
+                        { "include": "#type-expr" }
+                    ]
+                },
+                {
+                    "name": "entity.name.type.tyto",
+                    "match": "[A-Za-z_][A-Za-z0-9_]*"
+                },
+                {
+                    "name": "punctuation.definition.type.tyto",
+                    "match": "->|,|\\||\\[|\\]|\\{|\\}|\\(|\\)|<|>"
+                }
+            ]
+        },
+        "struct-decl": {
+            "comment": "struct / interface 声明：类型名 + 可选泛型参数 <T, U> + 体内字段标注与方法签名",
+            "begin": "\\b(struct|interface)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>))?",
+            "beginCaptures": {
+                "1": { "name": "storage.type.tyto" },
+                "2": { "name": "entity.name.type.tyto" },
+                "3": { "name": "punctuation.definition.typeparameters.begin.tyto" },
+                "4": { "name": "entity.name.type.parameter.tyto" },
+                "5": { "name": "punctuation.definition.typeparameters.end.tyto" }
+            },
+            "end": "\\}",
+            "patterns": [
+                { "include": "#comments" },
+                { "include": "#function-decl" },
+                { "include": "#return-type" },
+                {
+                    "comment": "struct 字段类型标注：`field: T`",
+                    "begin": "([A-Za-z_][A-Za-z0-9_]*)\\s*(:)",
+                    "beginCaptures": {
+                        "1": { "name": "variable.object.property.tyto" },
+                        "2": { "name": "punctuation.separator.annotation.tyto" }
+                    },
+                    "end": "(?=[,}]|$)",
+                    "patterns": [
+                        { "include": "#type-expr" }
+                    ]
+                }
+            ]
+        },
+        "impl-decl": {
+            "comment": "impl 块目标名（可带泛型实参 <T>）",
+            "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>))?",
+            "captures": {
+                "1": { "name": "storage.type.tyto" },
+                "2": { "name": "entity.name.type.tyto" },
+                "3": { "name": "punctuation.definition.typeparameters.begin.tyto" },
+                "4": { "name": "entity.name.type.parameter.tyto" },
+                "5": { "name": "punctuation.definition.typeparameters.end.tyto" }
+            }
+        },
+        "return-type": {
+            "comment": "返回类型标注：`-> T`（含泛型、[] 后缀与 | 联合）；到 { 或行尾为止",
+            "match": "(->)[ \\t]*((?:[A-Za-z_][A-Za-z0-9_]*|->|<|>|,|\\||\\[|\\]|\\(|\\)|[ \\t])+)(?=[{\\n]|$)",
+            "captures": {
+                "1": { "name": "keyword.operator.arrow.tyto" },
+                "2": { "name": "entity.name.type.tyto" }
+            }
+        },
+        "var-type-annotation": {
+            "comment": "变量类型标注：`x: T = ...` / `let x: T = ...`；类型段=标识符与类型标点（| < > [] {} () ->），前瞻 '=' 排除对象字面量与三元",
+            "match": "(?:\\b(let|const)\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*(:)[ \\t]*((?:[A-Za-z_][A-Za-z0-9_]*|->|<|>|,|\\||\\[|\\]|\\{|\\}|\\(|\\)|[ \\t])+)[ \\t]*(?==[^=])",
+            "captures": {
+                "1": { "name": "storage.type.tyto" },
+                "2": { "name": "variable.other.tyto" },
+                "3": { "name": "punctuation.separator.annotation.tyto" },
+                "4": { "name": "entity.name.type.tyto" }
             }
         },
         "numbers": {
@@ -77,7 +191,7 @@
                 },
                 {
                     "name": "storage.type.tyto",
-                    "match": "\\b(function|new|struct|impl|interface)\\b"
+                    "match": "\\b(function|new|struct|impl|interface|let|const)\\b"
                 },
                 {
                     "name": "keyword.operator.expression.tyto",

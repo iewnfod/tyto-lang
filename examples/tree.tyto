@@ -1,0 +1,11 @@
+struct TreeNode<T> {
+    val: T,
+    left: TreeNode | null,
+    right: TreeNode | null,
+}
+
+impl TreeNode<T> {
+    function new(val: T) {
+        self.val = val
+    }
+}

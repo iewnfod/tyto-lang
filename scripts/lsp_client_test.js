@@ -75,7 +75,7 @@ const { LspClient, mapCompletionItem } = __test;
 const BIN = process.argv[2] || path.join(__dirname, '..', 'target', 'debug', 'tyto');
 
 const TOKEN_TYPES = ['variable', 'parameter', 'function', 'method', 'property',
-    'struct', 'interface', 'class', 'namespace'];
+    'struct', 'interface', 'class', 'namespace', 'type'];
 
 function decodeDeltas(data) {
     const toks = [];
@@ -99,12 +99,49 @@ async function main() {
     await client.initPromise;
     check(client.ready && !client.dead, '客户端 initialize 握手成功');
 
+    // 捕获服务端推送的诊断（didOpen/didChange 触发 publishDiagnostics）
+    const diagsReceived = [];
+    const origDispatch = client.dispatch.bind(client);
+    client.dispatch = (msg) => {
+        if (msg.method === 'textDocument/publishDiagnostics') diagsReceived.push(msg.params);
+        return origDispatch(msg);
+    };
+
     const uri = 'file:///tmp/client_test.tyto';
     client.notify('textDocument/didOpen', {
         textDocument: { uri, languageId: 'tyto', version: 1, text: 's = "hi"\nq = s.' },
     });
+    await new Promise((r) => setTimeout(r, 200));
+    // `q = s.` 是语法错误：应推送语法诊断
+    let d = diagsReceived[diagsReceived.length - 1];
+    check(d && d.uri === uri && d.diagnostics.length === 1
+        && d.diagnostics[0].message.includes('语法错误'),
+    'didOpen 推送语法错误诊断');
 
-    // 成员补全：string 方法
+    // 类型错误诊断 + 修复后清空
+    client.notify('textDocument/didChange', {
+        textDocument: { uri, version: 2 },
+        contentChanges: [{ text: 'x: number = "oops"\n' }],
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    d = diagsReceived[diagsReceived.length - 1];
+    check(d && d.diagnostics.length === 1 && d.diagnostics[0].severity === 1
+        && d.diagnostics[0].message.includes('类型不匹配'),
+    'didChange 推送类型错误诊断（severity=1）');
+    client.notify('textDocument/didChange', {
+        textDocument: { uri, version: 3 },
+        contentChanges: [{ text: 'x: number = 1\n' }],
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    d = diagsReceived[diagsReceived.length - 1];
+    check(d && d.diagnostics.length === 0, '修复后诊断清空');
+
+    // 成员补全：string 方法（回填原文档内容）
+    client.notify('textDocument/didChange', {
+        textDocument: { uri, version: 4 },
+        contentChanges: [{ text: 's = "hi"\nq = s.' }],
+    });
+    await new Promise((r) => setTimeout(r, 100));
     let r = await client.request('textDocument/completion', {
         textDocument: { uri }, position: { line: 1, character: 6 },
     });
@@ -113,7 +150,7 @@ async function main() {
 
     // 全局补全：变量带类型
     client.notify('textDocument/didChange', {
-        textDocument: { uri, version: 2 },
+        textDocument: { uri, version: 5 },
         contentChanges: [{ text: 'n = 1\nfn = function(a: number) -> number {\n    return a\n}\n' }],
     });
     r = await client.request('textDocument/completion', {
@@ -150,6 +187,20 @@ async function main() {
     const toks = decodeDeltas(r.data);
     check(toks.some((t) => t[2] === 'variable'), '语义 token 含 variable');
     check(toks.some((t) => t[2] === 'parameter'), '语义 token 含 parameter（a 的声明）');
+    check(toks.some((t) => t[2] === 'type'), '语义 token 含 type（a: number 的标注）');
+
+    // 类型位置补全：`:` 之后给类型名，不给全局函数
+    client.notify('textDocument/didChange', {
+        textDocument: { uri, version: 6 },
+        contentChanges: [{ text: 'x: \n' }],
+    });
+    r = await client.request('textDocument/completion', {
+        textDocument: { uri }, position: { line: 0, character: 3 },
+    });
+    const typeLabels = (r.items || []).map((i) => i.label);
+    check(typeLabels.includes('number') && typeLabels.includes('Map'),
+        '类型位置补全含 number/Map');
+    check(!typeLabels.includes('println'), '类型位置不含全局函数');
 
     // 关停
     await client.request('shutdown', null);

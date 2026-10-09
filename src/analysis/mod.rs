@@ -11,6 +11,7 @@ pub mod scope;
 pub mod semantics;
 pub mod tolerate;
 
+use crate::Span;
 use infer::Ty;
 use scope::{Binding, Ctx, ScopeSnapshot, StructRegistry};
 use tolerate::{CursorMode, SourceMap};
@@ -56,12 +57,19 @@ pub fn complete(src: &str, line0: usize, char_utf16: usize) -> Vec<CompleteItem>
     let cursor_off = map.offset(cursor);
     let (mode, _, _) = tolerate::cursor_mode_and_insert(src, cursor_off);
 
+    // 类型标注位置（`:` / `->` 之后）：类型名补全，不经哨兵解析
+    if mode == CursorMode::Type && tolerate::type_context(src, cursor_off) {
+        return type_items(src, cursor);
+    }
+
     let patched = tolerate::parse_at_cursor(src, cursor);
     let Some(patched) = patched else {
-        // 完全解析失败：静态兜底
+        // 完全解析失败：静态兜底（Type 已在上方提前返回，此处防御性归入 Global）
         return match mode {
             CursorMode::Member => all_method_items(),
-            CursorMode::Global => global_static_items(&StructRegistry::default()),
+            CursorMode::Type | CursorMode::Global => {
+                global_static_items(&StructRegistry::default())
+            }
         };
     };
 
@@ -79,7 +87,7 @@ pub fn complete(src: &str, line0: usize, char_utf16: usize) -> Vec<CompleteItem>
 
     match mode {
         CursorMode::Member => member_items(&snap),
-        CursorMode::Global => global_items(&snap),
+        CursorMode::Type | CursorMode::Global => global_items(&snap),
     }
 }
 
@@ -119,6 +127,38 @@ pub fn hover(src: &str, line0: usize, char_utf16: usize) -> Option<HoverInfo> {
     } else {
         scope_hover(&word, &snap).or_else(|| builtin_global_info(&word))
     }
+}
+
+// ============ 类型补全 ============
+
+/// 类型标注位置的补全项：内置类型表 + 用户 struct / interface。
+/// 注册表优先用 ambient（挖掉光标语句、尽量保留全文），退而全文档解析（截断容错）。
+fn type_items(src: &str, cursor: Span) -> Vec<CompleteItem> {
+    let mut items: Vec<CompleteItem> = builtins::TYPES
+        .iter()
+        .map(|(name, sig, doc)| CompleteItem {
+            label: (*name).into(),
+            // Map 是可 new 的容器类，其余按关键字展示（与 TS 内置类型的图标习惯一致）
+            kind: if *name == "Map" { ItemKind::Class } else { ItemKind::Keyword },
+            detail: (*sig).into(),
+            doc: (*doc).into(),
+        })
+        .collect();
+
+    let program = tolerate::parse_ambient(src, cursor)
+        .or_else(|| semantics::parse_full(src).map(|(p, _)| p));
+    if let Some(program) = program {
+        let structs = scope::collect_registry(&program);
+        for s in structs.iter() {
+            items.push(CompleteItem {
+                label: s.name.clone(),
+                kind: if s.interface { ItemKind::Interface } else { ItemKind::Struct },
+                detail: s.detail(),
+                doc: if s.interface { "接口（作为类型标注）".into() } else { "struct（作为类型标注）".into() },
+            });
+        }
+    }
+    items
 }
 
 // ============ 成员补全 ============
@@ -200,18 +240,14 @@ fn struct_member_items(name: &str, ctx: &Ctx) -> Vec<CompleteItem> {
         })
         .collect();
     for m in &info.methods {
-        let ret = m
-            .ret
-            .clone()
-            .unwrap_or_else(|| {
-                infer::function_return(&m.params, &m.body, ctx)
-                    .map(|t| t.display())
-                    .unwrap_or_default()
-            });
-        let detail = if ret.is_empty() {
-            infer::func_sig(&m.name, &m.params, None)
-        } else {
-            format!("{} -> {}", infer::func_sig(&m.name, &m.params, None), ret)
+        // 返回类型：`-> T` 标注优先，否则从方法体 return 推导
+        let ret_str = match &m.ret {
+            Some(t) => Some(t.to_string()),
+            None => infer::function_return(&m.params, &m.body, ctx).map(|t| t.display()),
+        };
+        let detail = match ret_str {
+            Some(r) => format!("{} -> {}", infer::func_sig(&m.name, &m.params, None), r),
+            None => infer::func_sig(&m.name, &m.params, None),
         };
         items.push(CompleteItem {
             label: m.name.clone(),
@@ -379,8 +415,12 @@ fn member_info(recv: &Ty, word: &str, ctx: &Ctx) -> Option<HoverInfo> {
         Ty::Struct(name) => {
             let info = ctx.structs.get(name)?;
             if let Some(f) = info.fields.iter().find(|p| p.name == word) {
+                let ty_str = match &f.ty {
+                    Some(t) => t.to_string(),
+                    None => "unknown".into(),
+                };
                 return Some(HoverInfo {
-                    signature: format!("**{}.{}**: {}", name, word, f.ty.clone().unwrap_or_else(|| "unknown".into())),
+                    signature: format!("**{}.{}**: {}", name, word, ty_str),
                     doc: format!("字段（struct {}）", name),
                 });
             }

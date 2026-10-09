@@ -33,7 +33,7 @@ cargo install --path .        # 先装 tyto（补全/悬停的语言服务器）
 - `struct` + `impl` 分离定义（字段固定、方法共享、`new` 构造）
 - 结构化 `interface`（纯契约声明，`is` 运行时按方法集检查）
 - `new T()` = 构造实例 + 自动调用 `T::new()`（无 `new` 方法时按位置初始化字段）
-- 可选类型标注：`x: number = 1`、参数 `a: number`、返回 `-> number`、struct 字段（纯文档性质，运行时不检查）
+- 渐进类型系统（TS 式）：标注可选、`let` / `const`、联合 `number | null`、泛型 `function id<T>(x: T) -> T` / `struct Box<T>`、`Array<T>` / `Map<K, V>`、结构化对象与函数类型；写了标注才检查（编辑器诊断 + `tyto check`），运行时擦除、`any` 兜底
 
 规划中：
 

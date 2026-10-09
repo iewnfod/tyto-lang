@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const KEYWORDS = [
     'if', 'else', 'while', 'for', 'in', 'break', 'continue', 'return',
     'function', 'new', 'true', 'false', 'null', 'self',
-    'struct', 'impl', 'interface', 'is',
+    'struct', 'impl', 'interface', 'is', 'let', 'const',
 ];
 
 // [名称, 签名, 文档]
@@ -44,6 +44,20 @@ const CONSTANTS = [
     ['nan', 'nan', '非数（0 / 0）'],
     ['fs', 'fs.*', '文件命名空间：read_file / read_lines / write_file / append_file / exists / list_dir'],
     ['sys', 'sys.*', '系统命名空间：shell / get_env / args'],
+];
+
+// 类型标注可用名（降级用；与 Rust 端 src/analysis/builtins.rs 的 TYPES 同源）
+const TYPES = [
+    ['number', 'number', '数字类型'],
+    ['string', 'string', '字符串类型'],
+    ['bool', 'bool', '布尔类型（也接受 boolean 写法）'],
+    ['array', 'array', '数组类型；元素类型可加 `[]` 后缀标注，如 number[]'],
+    ['map', 'map', '映射类型'],
+    ['object', 'object', '对象字面量类型'],
+    ['function', 'function', '函数类型'],
+    ['any', 'any', '任意类型（标注缺省值）'],
+    ['Array', 'Array', 'array 的别名写法'],
+    ['Map', 'Map<K, V>', '保序哈希表类型，如 Map<string, number>'],
 ];
 
 // 无类型信息：`.` 后给出所有原生方法，detail 标注适用类型
@@ -114,6 +128,19 @@ function staticCompletion(document, position) {
     if (afterDot) {
         return METHODS.map(([name, sig, doc]) =>
             completion(name, sig, doc, vscode.CompletionItemKind.Method));
+    }
+
+    // 类型标注位置：`:` / `->` 之后给类型名。
+    // 三元 `? ... :` 不算；本行 `{` 比 `(` 更近的是对象字面量键值（跨行对象
+    // 追踪不到，静态降级的已知局限——语言服务器在线时由 Rust 端精确判定）。
+    const inType = /->\s*\w*$/.test(prefix)
+        || (/:\s*\w*$/.test(prefix)
+            && !/\?[^?:]*:\s*\w*$/.test(prefix)
+            && !(prefix.lastIndexOf('{') > prefix.lastIndexOf('(')));
+    if (inType) {
+        return TYPES.map(([name, sig, doc]) =>
+            completion(name, sig, doc,
+                name === 'Map' ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.Keyword));
     }
 
     const items = [];
@@ -247,7 +274,11 @@ class LspClient {
                 entry.resolve(msg.result);
             }
         }
-        // 服务端主动通知（window/logMessage 等）：仅展示，不处理
+        // 服务端主动通知：诊断推送给回调（activate 里映射到编辑器），日志仅展示
+        if (msg.method === 'textDocument/publishDiagnostics') {
+            if (this.onDiagnostics) this.onDiagnostics(msg.params);
+            return;
+        }
         if (msg.method === 'window/logMessage' && msg.params && msg.params.message) {
             this.outputChannel.appendLine(msg.params.message);
         }
@@ -353,6 +384,30 @@ function activate(context) {
     const serverPath = vscode.workspace.getConfiguration('tyto').get('serverPath') || 'tyto';
     client = new LspClient(serverPath, outputChannel);
 
+    // 类型/语法诊断：publishDiagnostics → 编辑器红/黄波浪线（擦除语义：仅提示不阻塞运行）
+    const diagnostics = vscode.languages.createDiagnosticCollection('tyto');
+    const SEVERITY = {
+        1: vscode.DiagnosticSeverity.Error,
+        2: vscode.DiagnosticSeverity.Warning,
+        3: vscode.DiagnosticSeverity.Information,
+        4: vscode.DiagnosticSeverity.Hint,
+    };
+    client.onDiagnostics = (params) => {
+        const items = (params && params.diagnostics) || [];
+        diagnostics.set(vscode.Uri.parse(params.uri), items.map((d) => {
+            const rng = d.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+            return new vscode.Diagnostic(
+                new vscode.Range(
+                    new vscode.Position(rng.start.line, rng.start.character),
+                    new vscode.Position(rng.end.line, rng.end.character),
+                ),
+                d.message || '',
+                SEVERITY[d.severity] || vscode.DiagnosticSeverity.Error,
+            );
+        }));
+    };
+    context.subscriptions.push(diagnostics);
+
     // 文档同步（全量）
     const sync = (document) => {
         if (!client || client.dead || document.languageId !== 'tyto' || !client.ready) return;
@@ -379,8 +434,9 @@ function activate(context) {
             });
         }),
         vscode.workspace.onDidCloseTextDocument((doc) => {
-            if (!client || client.dead || !client.ready) return;
             if (doc.languageId !== 'tyto') return;
+            diagnostics.delete(doc.uri);
+            if (!client || client.dead || !client.ready) return;
             client.notify('textDocument/didClose', { textDocument: { uri: doc.uri.toString() } });
         })
     );
@@ -448,7 +504,7 @@ function activate(context) {
     // 语义着色：等握手完成后注册（legend 从服务端 capabilities 读取，缺失用内置表）
     const SEMANTIC_LEGEND = [
         'variable', 'parameter', 'function', 'method', 'property',
-        'struct', 'interface', 'class', 'namespace',
+        'struct', 'interface', 'class', 'namespace', 'type',
     ];
     const provideDocumentSemanticTokens = async (document) => {
         if (!client || !client.ready || client.dead) {

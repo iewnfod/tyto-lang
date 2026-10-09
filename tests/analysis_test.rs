@@ -435,3 +435,57 @@ fn global_completion_contains_keywords_and_builtins() {
         assert!(ls.contains(&cls.to_string()), "缺内置类 {cls}");
     }
 }
+
+// ============ 类型位置补全 ============
+
+#[test]
+fn type_completion_after_colon_and_arrow() {
+    // 变量标注位置
+    let items = complete_at("x: §");
+    assert!(find(&items, "number").is_some(), "缺 number");
+    assert!(find(&items, "string").is_some(), "缺 string");
+    assert!(find(&items, "Map").is_some(), "缺 Map");
+    assert!(find(&items, "println").is_none(), "类型位置不应有全局函数");
+    assert!(find(&items, "if").is_none(), "类型位置不应有关键字");
+
+    // 返回类型位置（语句残缺也能给类型表）
+    let items = complete_at("function f(a) -> §");
+    assert!(find(&items, "array").is_some(), "返回类型缺 array");
+
+    // 参数标注位置
+    let items = complete_at("function f(a: §");
+    assert!(find(&items, "number").is_some(), "参数标注缺 number");
+
+    // struct 字段标注位置
+    let items = complete_at("struct S {\n    x: §\n}\n");
+    assert!(find(&items, "string").is_some(), "字段标注缺 string");
+}
+
+#[test]
+fn type_completion_includes_user_structs() {
+    let items = complete_at("struct Point { x, y }\ninterface Shape { function area() }\nv: §");
+    let p = find(&items, "Point").expect("缺用户 struct");
+    assert_eq!(p.kind, ItemKind::Struct);
+    let s = find(&items, "Shape").expect("缺接口");
+    assert_eq!(s.kind, ItemKind::Interface);
+    // 已输入前缀场景：`v: P§` 也命中
+    let items = complete_at("struct Point { x, y }\nv: P§");
+    assert!(find(&items, "Point").is_some(), "带前缀 P 应命中 Point");
+}
+
+#[test]
+fn value_positions_not_hijacked_by_type_completion() {
+    // 对象字面量值位置：仍是全局补全
+    let items = complete_at("n = 1\no = { a: §");
+    assert!(find(&items, "n").is_some(), "对象值位置应能看到变量 n");
+    assert!(find(&items, "number").is_none(), "对象值位置不该给类型");
+
+    // 三元假分支：仍是全局补全
+    let items = complete_at("n = 1\nc = true ? x : §");
+    assert!(find(&items, "n").is_some(), "三元分支应能看到变量 n");
+    assert!(find(&items, "number").is_none(), "三元分支不该给类型");
+
+    // 嵌套三元
+    let items = complete_at("n = 1\nc = a ? b : d ? e : §");
+    assert!(find(&items, "n").is_some(), "嵌套三元应能看到变量 n");
+}

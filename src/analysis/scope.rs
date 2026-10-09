@@ -15,12 +15,17 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{AssignOp, Expr, ForIter, Param, Stmt};
+use crate::ast::{AssignOp, Expr, ForIter, Param, Stmt, TypeAst};
 use crate::Span;
 
-use super::infer::{self, assign_result_ty, func_sig, infer as infer_expr, ty_from_annotation};
+use super::infer::{self, assign_result_ty, func_sig, infer as infer_expr, ty_from_ast};
 use super::infer::Ty;
 use super::ItemKind;
+
+// struct/interface 注册表已迁入核心 checker（事实来源单一化），这里转发
+pub use crate::checker::registry::{
+    collect_registry, FuncInfo, StructInfo, StructRegistry,
+};
 
 pub const SENTINEL: &str = "__tyto_cx__";
 
@@ -37,75 +42,6 @@ pub struct Binding {
     pub span: Span,
 }
 
-/// struct / interface 注册表项
-#[derive(Debug, Clone)]
-pub struct StructInfo {
-    pub name: String,
-    pub interface: bool,
-    pub fields: Vec<Param>,
-    pub methods: Vec<FuncInfo>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub struct FuncInfo {
-    pub name: String,
-    pub params: Vec<Param>,
-    pub ret: Option<String>,
-    pub body: Rc<Stmt>,
-}
-
-impl StructInfo {
-    pub fn detail(&self) -> String {
-        if self.interface {
-            format!(
-                "interface {} {{ {} }}",
-                self.name,
-                self.methods.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ")
-            )
-        } else {
-            format!(
-                "struct {} {{ {} }}",
-                self.name,
-                self.fields.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
-            )
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct StructRegistry {
-    map: HashMap<String, StructInfo>,
-}
-
-impl StructRegistry {
-    pub fn get(&self, name: &str) -> Option<&StructInfo> {
-        self.map.get(name)
-    }
-    pub fn contains(&self, name: &str) -> bool {
-        self.map.contains_key(name)
-    }
-    pub fn iter(&self) -> impl Iterator<Item = &StructInfo> {
-        self.map.values()
-    }
-    fn entry(&mut self, info: StructInfo) {
-        self.map.insert(info.name.clone(), info);
-    }
-}
-
-/// 推导上下文：作用域链（外→内）+ struct 注册表
-pub struct Ctx<'a> {
-    pub scopes: &'a [HashMap<String, Binding>],
-    pub structs: &'a StructRegistry,
-}
-
-impl<'a> Ctx<'a> {
-    /// 沿链（内→外）查绑定
-    pub fn lookup(&self, name: &str) -> Option<&Binding> {
-        self.scopes.iter().rev().find_map(|s| s.get(name))
-    }
-}
-
 /// 走到哨兵后的作用域快照
 #[derive(Debug)]
 pub struct ScopeSnapshot {
@@ -118,74 +54,16 @@ pub struct ScopeSnapshot {
     pub structs: StructRegistry,
 }
 
-/// 全文件收集 struct / impl / interface（对编辑中的代码宽容：不看光标位置）
-pub fn collect_registry(program: &Stmt) -> StructRegistry {
-    let mut reg = StructRegistry::default();
-    walk_types(program, &mut reg);
-    reg
+/// 推导上下文：作用域链（外→内）+ struct 注册表
+pub struct Ctx<'a> {
+    pub scopes: &'a [HashMap<String, Binding>],
+    pub structs: &'a StructRegistry,
 }
 
-fn walk_types(stmt: &Stmt, reg: &mut StructRegistry) {
-    match stmt {
-        Stmt::Struct { name, fields, .. } => {
-            reg.entry(StructInfo {
-                name: name.clone(),
-                interface: false,
-                fields: fields.clone(),
-                methods: Vec::new(),
-                span: stmt.span(),
-            });
-        }
-        Stmt::Interface { name, methods, .. } => {
-            reg.entry(StructInfo {
-                name: name.clone(),
-                interface: true,
-                fields: Vec::new(),
-                methods: methods
-                    .iter()
-                    .map(|m| FuncInfo {
-                        name: m.clone(),
-                        params: Vec::new(),
-                        ret: None,
-                        body: Rc::new(Stmt::Block { stmts: Vec::new(), span: Span::default() }),
-                    })
-                    .collect(),
-                span: stmt.span(),
-            });
-        }
-        Stmt::Impl { target, methods, .. } => {
-            // struct 可能尚未声明（编辑中）：先造空壳，后续声明补字段
-            let entry = reg.map.entry(target.clone()).or_insert_with(|| StructInfo {
-                name: target.clone(),
-                interface: false,
-                fields: Vec::new(),
-                methods: Vec::new(),
-                span: stmt.span(),
-            });
-            for m in methods {
-                if let Stmt::FuncDecl { name, params, ret, body, .. } = m {
-                    // 同名方法覆盖（与运行时一致）
-                    entry.methods.retain(|old| old.name != *name);
-                    entry.methods.push(FuncInfo {
-                        name: name.clone(),
-                        params: params.clone(),
-                        ret: ret.clone(),
-                        body: body.clone(),
-                    });
-                }
-            }
-        }
-        Stmt::Block { stmts, .. } => stmts.iter().for_each(|s| walk_types(s, reg)),
-        Stmt::If { then_block, else_block, .. } => {
-            walk_types(then_block, reg);
-            if let Some(e) = else_block {
-                walk_types(e, reg);
-            }
-        }
-        Stmt::While { body, .. } | Stmt::ForIn { body, .. } | Stmt::ForC { body, .. } => {
-            walk_types(body, reg)
-        }
-        _ => {}
+impl<'a> Ctx<'a> {
+    /// 沿链（内→外）查绑定
+    pub fn lookup(&self, name: &str) -> Option<&Binding> {
+        self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 }
 
@@ -394,7 +272,7 @@ impl<'a> Walker<'a> {
         &mut self,
         name: &str,
         params: &[Param],
-        ret: &Option<String>,
+        ret: &Option<TypeAst>,
         body: &Rc<Stmt>,
         self_ty: Option<Ty>,
         scopes: &mut Vec<HashMap<String, Binding>>,
@@ -420,7 +298,7 @@ impl<'a> Walker<'a> {
             let ty = p
                 .ty
                 .as_ref()
-                .map(|a| ty_from_annotation(a, self.structs))
+                .map(|a| ty_from_ast(a, self.structs))
                 .unwrap_or(Ty::Unknown);
             frame.insert(
                 p.name.clone(),
@@ -616,7 +494,7 @@ pub(crate) fn register_leaf(
     scopes: &mut Vec<HashMap<String, Binding>>,
 ) {
     match stmt {
-        Stmt::Assign { target, op, value, ann, span } => {
+        Stmt::Assign { target, op, value, ann, decl, span } => {
             let Expr::Ident(name, tspan) = target else {
                 // 对象字段 / 索引赋值不引入新绑定
                 return;
@@ -624,7 +502,7 @@ pub(crate) fn register_leaf(
             let ctx = Ctx { scopes, structs };
             let rhs = infer_expr(value, &ctx);
             let new_ty = if let Some(a) = ann {
-                ty_from_annotation(a, structs)
+                ty_from_ast(a, structs)
             } else if *op != AssignOp::Set {
                 match chain_find(scopes, name) {
                     Some(old) => assign_result_ty(*op, &old.ty, &rhs),
@@ -633,6 +511,7 @@ pub(crate) fn register_leaf(
             } else {
                 rhs
             };
+            let _ = decl; // let/const 对编辑器绑定无差别（运行时才区分）
             // 跳转定义指向**首个**声明处：重赋值保留旧 span
             let dspan = chain_find(scopes, name)
                 .map(|old| old.span)
@@ -650,11 +529,11 @@ pub(crate) fn register_leaf(
             let _ = span;
             chain_insert(scopes, name, b);
         }
-        Stmt::FuncDecl { name, params, ret, body, span } => {
+        Stmt::FuncDecl { name, params, ret, body, span, .. } => {
             // 返回类型：标注优先，否则从 body 的 return 推导
             let ret_ty = ret
                 .as_ref()
-                .map(|a| ty_from_annotation(a, structs))
+                .map(|a| ty_from_ast(a, structs))
                 .or_else(|| infer::function_return(params, body, &Ctx { scopes, structs }));
             chain_insert(
                 scopes,
@@ -670,7 +549,7 @@ pub(crate) fn register_leaf(
                 },
             );
         }
-        Stmt::Struct { name, fields, span } => {
+        Stmt::Struct { name, fields, span, .. } => {
             chain_insert(
                 scopes,
                 name,
@@ -696,7 +575,11 @@ pub(crate) fn register_leaf(
                     name: name.clone(),
                     ty: Ty::InterfaceDef(name.clone()),
                     kind: ItemKind::Interface,
-                    detail: format!("interface {} {{ {} }}", name, methods.join(", ")),
+                    detail: format!(
+                        "interface {} {{ {} }}",
+                        name,
+                        methods.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
                     doc: String::new(),
                     span: Span::new(span.line, span.col + 10),
                 },

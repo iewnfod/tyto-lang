@@ -17,6 +17,7 @@ use lsp_server::{Connection, Message, Notification, Request, Response};
 use serde_json::{json, Value};
 
 use crate::analysis::{self, CompleteItem, ItemKind};
+use crate::{Lexer, Parser};
 
 /// 入口：`tyto lsp`
 pub fn run() -> ! {
@@ -85,7 +86,13 @@ fn main_loop(connection: Connection, mut state: ServerState) -> Result<(), Strin
                 if not.method == "exit" {
                     return Ok(());
                 }
-                handle_notification(&mut state, not);
+                // didOpen / didChange 之后推送诊断（语法错误 + 类型检查）
+                if let Some(pub_not) = handle_notification(&mut state, not) {
+                    connection
+                        .sender
+                        .send(Message::Notification(pub_not))
+                        .map_err(|e| format!("send diagnostics: {e}"))?;
+                }
             }
             // 本服务不发 server→client 请求，客户端响应忽略
             Message::Response(_) => {}
@@ -108,7 +115,7 @@ fn handle_request(state: &mut ServerState, req: Request) -> Response {
     }
 }
 
-fn handle_notification(state: &mut ServerState, not: Notification) {
+fn handle_notification(state: &mut ServerState, not: Notification) -> Option<Notification> {
     match not.method.as_str() {
         "textDocument/didOpen" => {
             if let (Some(uri), Some(text)) = (
@@ -116,7 +123,9 @@ fn handle_notification(state: &mut ServerState, not: Notification) {
                 not.params.pointer("/textDocument/text").and_then(Value::as_str),
             ) {
                 state.docs.insert(uri.to_string(), text.to_string());
+                return Some(publish_diagnostics(uri, text));
             }
+            None
         }
         "textDocument/didChange" => {
             let Some(uri) = not
@@ -124,7 +133,7 @@ fn handle_notification(state: &mut ServerState, not: Notification) {
                 .pointer("/textDocument/uri")
                 .and_then(Value::as_str)
             else {
-                return;
+                return None;
             };
             // 全量同步：取最后一个 contentChanges 的 text
             if let Some(text) = not
@@ -136,7 +145,9 @@ fn handle_notification(state: &mut ServerState, not: Notification) {
                 .and_then(Value::as_str)
             {
                 state.docs.insert(uri.to_string(), text.to_string());
+                return Some(publish_diagnostics(uri, text));
             }
+            None
         }
         "textDocument/didClose" => {
             if let Some(uri) = not
@@ -145,10 +156,72 @@ fn handle_notification(state: &mut ServerState, not: Notification) {
                 .and_then(Value::as_str)
             {
                 state.docs.remove(uri);
+                // 关闭文档：清空诊断
+                return Some(Notification::new(
+                    "textDocument/publishDiagnostics".into(),
+                    json!({ "uri": uri, "diagnostics": [] }),
+                ));
             }
+            None
         }
-        _ => {}
+        _ => None,
     }
+}
+
+// ============ 诊断（语法错误 + 渐进类型检查） ============
+
+/// 计算文档的全部诊断：词法 → 语法 → 类型（前者失败即止）
+fn compute_diagnostics(text: &str) -> Vec<Value> {
+    let map = analysis::tolerate::SourceMap::new(text);
+    let mut items = Vec::new();
+
+    let mut push = |span: crate::Span, sev: u8, msg: String, len: usize| {
+        let (line, col) = map.from_span(span);
+        items.push(json!({
+            "range": {
+                "start": { "line": line, "character": col },
+                "end": { "line": line, "character": col + len },
+            },
+            "severity": sev,
+            "source": "tyto",
+            "message": msg,
+        }));
+    };
+
+    let tokens = match Lexer::new(text).tokenize() {
+        Ok(out) => out.tokens,
+        Err(e) => {
+            if let crate::RtError::Lex { span, message } = &e {
+                push(*span, 1, format!("词法错误：{message}"), 1);
+            }
+            return items;
+        }
+    };
+    let program = match Parser::new(tokens).parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            if let crate::RtError::Parse { span, message } = &e {
+                push(*span, 1, format!("语法错误：{message}"), 1);
+            }
+            return items;
+        }
+    };
+    let out = crate::checker::check_program(&program);
+    for d in out.diagnostics {
+        let sev = match d.severity {
+            crate::checker::diag::Severity::Error => 1,
+            crate::checker::diag::Severity::Warning => 2,
+        };
+        push(d.span, sev, d.message, 1);
+    }
+    items
+}
+
+fn publish_diagnostics(uri: &str, text: &str) -> Notification {
+    Notification::new(
+        "textDocument/publishDiagnostics".into(),
+        json!({ "uri": uri, "diagnostics": compute_diagnostics(text) }),
+    )
 }
 
 /// 请求位置（0-based 行、UTF-16 列）

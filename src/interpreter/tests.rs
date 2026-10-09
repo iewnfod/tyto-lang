@@ -711,3 +711,27 @@ fn type_annotations_are_documentation_only() {
     let e = run_err("function f(a: number) {}\nf(1, 2)");
     assert!(matches!(e, RtError::Runtime { ref message, .. } if message.contains("expects 1 argument")));
 }
+
+#[test]
+fn let_and_const_declarations_run() {
+    // let：正常声明与读、可重新赋值
+    assert_eq!(run("let x = 1\nx = x + 1\nprintln(x)"), "2\n");
+    assert_eq!(run("let x: number = 3\nprintln(x * 2)"), "6\n");
+    // let 在函数内遮蔽外层同名（当前作用域新建）
+    assert_eq!(
+        run("x = 1\nfunction f() {\n    let x = 2\n    return x\n}\nprintln(f() + x)"),
+        "3\n"
+    );
+    // const：可读不可写
+    assert_eq!(run("const PI = 3.14\nprintln(PI)"), "3.14\n");
+    assert_eq!(run("const s: string = \"hi\"\nprintln(s)"), "hi\n");
+    // 对 const 赋值 → 运行时错误（含复合赋值与内层作用域穿透）
+    let e = run_err("const x = 1\nx = 2");
+    assert!(matches!(e, RtError::Runtime { ref message, .. } if message.contains("cannot assign to constant `x`")));
+    let e = run_err("const x = 1\nx += 1");
+    assert!(matches!(e, RtError::Runtime { ref message, .. } if message.contains("cannot assign to constant `x`")));
+    let e = run_err("const h = 1\nfunction f() {\n    h = 2\n}\nf()");
+    assert!(matches!(e, RtError::Runtime { ref message, .. } if message.contains("cannot assign to constant `h`")));
+    // const 绑定本身可变内容（引用值不加锁：数组内容可改）
+    assert_eq!(run("const a = [1, 2]\na.push(3)\nprintln(a.len())"), "3\n");
+}

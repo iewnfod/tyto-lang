@@ -4,7 +4,7 @@
 
 - [词法](#词法)
 - [类型与值](#类型与值)
-- [类型标注（不检查）](#类型标注不检查)
+- [渐进类型系统（gradual typing）](#渐进类型系统gradual-typing)
 - [运算符与表达式](#运算符与表达式)
 - [语句](#语句)
 - [函数与作用域](#函数与作用域)
@@ -51,15 +51,16 @@ arr
 
 `[a-zA-Z_][a-zA-Z0-9_]*`，大小写敏感。
 
-关键字（共 18 个）：
+关键字（共 20 个）：
 
 ```
 function  return  if  else  while  for  in  break  continue
 true  false  null  new
 struct  impl  interface  is
+let  const
 ```
 
-> ⚠️ `let` 目前**不是**关键字（可作变量名），是后续版本的预留方向，新代码请避免使用。
+> `let` / `const` 是 v1 渐进类型系统引入的声明关键字（可选使用，见[渐进类型系统](#渐进类型系统gradual-typing)）。
 
 命名惯例（语言不强制）：变量/函数 `snake_case`，类型（struct / interface）`CamelCase`，常量 `UPPER_SNAKE`。
 
@@ -121,14 +122,118 @@ null   EMPTY   false   0   nan   ""
 
 ---
 
-## 类型标注（不检查）
+## 渐进类型系统（gradual typing）
 
-Tyto **不是强类型语言**。类型标注是纯文档性质：让代码更清晰、为将来的类型推导保留信息，**运行时完全不检查**——标注与实际值不符不报错，删掉任何标注程序行为不变。
+Tyto 是**渐进类型语言**（TS 风格）：类型标注可选；写了标注的地方由静态检查器检查（编辑器红线 / `tyto check`），**运行时擦除**——类型错误只提示、永不阻塞执行，删掉任何标注程序行为不变。
 
-可标注的位置：
+### 核心语义
+
+- **标注才约束**：`let x = 1`（未标注）后续赋任意值都不报；`let x: number = 1` 再赋 `string` 是类型错误
+- **any 兜底**：未标注代码、推不出的类型一律 `any`，与任何类型互相兼容——想保持 Python 式自由随时可以
+- **运行时擦除**：`x: number = "abc"` 照常运行（`x` 就是 `"abc"`）；唯一例外是 **const**（见下）
+- 检查入口：编辑器（LSP 诊断）、`tyto check file.tyto`（有 Error 时 exit 1，CI 用）；`tyto file.tyto` 运行前会打印类型诊断到 stderr（`--no-check` 关闭）
+
+### let / const
 
 ```
-x: number = 1                                       // 变量（必须带 = 值）
+let x = 1                        // 声明（必须初始化）；写入不受约束，读取按最新推导类型
+let y: number | null = null      // 声明 + 类型标注
+const MAX = 100                  // 常量：初始值类型固定，再赋值是运行时错误 + 静态错误
+const PI: number = 3.14
+```
+
+- `let` / `const` 是保留字；不带关键字的旧写法 `x = 1`、`x: T = v` 完全兼容
+- const 绑定本身不可再赋，但其引用的内容可变（`const a = [1]; a.push(2)` 合法）
+- 同层重复声明（`let a = 1` 后又 `let a = 2`）产生警告；内层遮蔽外层同名不警告
+
+### 类型写法
+
+```
+number  string  bool  null  empty  any            // 基础类型（any 放行一切）
+number[]  Array<Point>                          // 数组（元素类型参与推导：a[0]、for-in 循环变量）
+Map<string, number>                             // 键值类型：m.get(k) → number | null
+number | null                                   // 联合类型
+Box<number>                                     // 泛型 struct 实例
+{x: number, y: string}                          // 结构化对象类型
+(a: number, b: string) -> bool                  // 函数类型
+(number | null)[]                               // 括号分组：联合数组
+```
+
+### 泛型
+
+```
+function id<T>(x: T) -> T { return x }          // 泛型函数：调用点从实参推导 T
+a = id(42)                                      // a 推导为 number
+b = id("s")                                     // b 推导为 string
+
+struct Box<T> {                                 // 泛型 struct：new 时按字段位置求解
+    v: T,
+}
+n = new Box(1)                                  // n.v 推导为 number
+s = new Box("x")                                // s.v 推导为 string
+```
+
+递归数据结构（树 / 链表）的完整形态——impl 声明泛型参数，方法签名引用 `T`：
+
+```
+struct TreeNode<T> {
+    val: T,
+    left: TreeNode<T> | null,                   // 递归字段写全实参
+    right: TreeNode<T> | null,
+}
+
+impl TreeNode<T> {
+    function new(val: T) {                      // self 自动注入，不写成参数
+        self.val = val
+        self.left = null
+        self.right = null
+    }
+    function get_val() -> T {
+        return self.val
+    }
+}
+
+root = new TreeNode(1)                          // root: TreeNode<number>
+n: number = root.get_val()                      // ✓ T 求解为 number
+```
+
+- 泛型参数在函数体内按 `any` 对待（检查器不做完整合一，解不出即放行——绝不误报）
+- 匿名函数同样可声明：`function<T>(x: T) -> T { ... }`
+- **impl 块可声明泛型参数**：`impl TreeNode<T> { ... }`，方法签名可引用 `T`（名字与 struct 声明一致；省略 `<T>` 时沿用 struct 声明的参数名）。方法亦可自带泛型参数（`function pair<K>(a: K, b: K)`）。`self` 由 `obj.f()` 调用自动注入，**不要**写成显式参数
+- 递归 struct 的字段建议写全实参：`left: TreeNode<T> | null`（裸 `TreeNode` 合法但子节点类型退化为 any）
+
+### 联合类型与收窄
+
+```
+n: number | null = find()
+m = n + 1                // ✗ 类型错误：number | null 可能是 null
+m = (n ?? 0) + 1         // ✓ ?? 收窄掉 null
+m = n?.len()             // ?. 可选链在联合含 null 时放行
+```
+
+- `??` / `?.` 做表达式级收窄；if / is 控制流收窄尚不支持（v1）
+- `empty` 哨兵（堆栈队列 pop/peek 的返回）在算术与堆 push 中按数字习惯放行（既有惯用形依赖算法不变量）
+- 未细化 Map 的 `get()` 返回 `any | null`，因含 any 整体按 any 放行
+
+### 检查项清单
+
+| 检查 | 例子 | 级别 |
+|---|---|---|
+| 标注 vs 初始值 | `x: number = "s"` | Error |
+| 赋值 vs 已标注绑定 | `x: number = 1` 后 `x = "s"` | Error |
+| const 重赋值 | `const k = 1` 后 `k = 2` | Error + 运行时错误 |
+| 调用实参个数/类型 | `add(1, "s")`、`add(1)` | Error |
+| return vs `-> T` | `function f() -> number { return "s" }` | Error |
+| 有返回标注但无 return | `function f() -> number { }` | Warning |
+| 成员存在性 | `p.z`（struct P 无 z）、`x.len()`（x 是 number） | Error |
+| 算术操作数 | `true + false`、`number \| null + 1` | Error |
+| 数组元素写入 | `a: number[]` 后 `a.push("s")` | Error |
+| 同层重复声明 | `let a = 1` 后 `let a = 2` | Warning |
+
+### 可标注的位置
+
+```
+let x: number = 1                                   // 声明 + 标注（x: number = 1 旧写法同样合法）
 function add(a: number, b: number) -> number {      // 参数 + 返回类型
     return a + b
 }
@@ -138,17 +243,16 @@ struct Point {
     y: number,
 }
 interface Shape {
-    function area() -> number    // interface 签名里也接受（只保留方法名契约）
+    function area() -> number    // interface 签名完整保留（is 检查仍只看方法名）
 }
 ```
-
-类型写法：标识符 + 可选泛型参数 + 可选 `[]` 后缀，如 `number`、`Point`、`number[]`、`Map<string, number>`。惯用基础名 `number` / `string` / `bool` / `null` / `any`，struct / interface 名，以及 `Array` / `Map` 等内置类名（语言不强制任何写法）。
 
 规则细节：
 
 - 变量标注只允许普通变量名 + `=`：`x: number = 1` 合法；`a[0]: number = 1`、`p.x: number = 1`、`x: number += 1`、缺 `=` 的单独 `x: number` 均为解析错误
 - `->` 在 `)` 之后、`{` 之前，可跨行书写
-- 标注会存入 AST 供工具使用；解释器只取参数/字段名，参数个数检查、作用域等一切语义照旧
+- 对象类型字段必须带类型（`{x}` 非法）；函数类型参数必须 `名字: 类型` 且必须 `-> 返回`
+- 标注存入 AST（结构化 TypeAst）；解释器只取参数/字段名，参数个数检查、作用域等一切语义照旧
 
 ---
 
@@ -341,7 +445,7 @@ println(add(1, 2))     // 3
 - **参数个数严格检查**：多了少了都报错
 - 函数声明在**执行到时**定义（无提升），先定义后调用
 - 递归天然可用（名字经闭包链查到）
-- 参数与返回值可加类型标注（纯文档性质，见[类型标注](#类型标注不检查)）：
+- 参数与返回值可加类型标注（渐进类型系统检查，见[渐进类型系统](#渐进类型系统gradual-typing)）：
 
 ```
 function add(a: number, b: number) -> number {
@@ -441,7 +545,7 @@ println(p.len())    // 5
 
 ### 声明
 
-- `struct Name { x, y }`：字段只写名字，也可带类型标注 `struct Point { x: number, y: number }`（纯文档性质，见[类型标注](#类型标注不检查)）；逗号或换行分隔，允许尾逗号；重复字段报运行时错误
+- `struct Name { x, y }`：字段只写名字，也可带类型标注 `struct Point { x: number, y: number }`（渐进类型系统检查，见[渐进类型系统](#渐进类型系统gradual-typing)）；逗号或换行分隔，允许尾逗号；重复字段报运行时错误
 - `struct` 是语句，执行到时在当前作用域定义绑定 `Name`（先定义后使用，同函数声明）
 - 定义本身就是值：`println(Point)` → `<struct Point>`，`type(Point)` → `"struct"`
 
@@ -771,10 +875,12 @@ for a in sys.args() {
 ```sh
 tyto script.tyto      # 运行脚本（后缀无所谓，解释器不检查）；额外的参数经 sys.args() 传给脚本
 tyto                  # REPL
-tyto lsp              # 语言服务器（stdio，编辑器插件用；补全/悬停的类型推导）
+tyto check f.tyto     # 仅类型检查（不执行）：语法 + 渐进类型诊断，有 Error 时退出码 1（CI 用）
+tyto lsp              # 语言服务器（stdio，编辑器插件用；补全/悬停/诊断）
 tyto --tokens f       # 调试：打印 token 流（行:列 + 类型），短参 -t
 tyto --ast f          # 调试：打印 AST，短参 -a
 tyto --time f         # 脚本执行完后输出耗时（stderr），短参 -T
+tyto --no-check f     # 运行时跳过类型检查（默认运行前打印诊断到 stderr 但照常执行），短参 -n
 ```
 
 选项可放在任意位置；以 `-` 开头的脚本参数需用 `--` 分隔（`tyto s.tyto -- -t` 中的 `-t` 会传给脚本而不是当成选项）。未知选项与缺文件的调试开关以退出码 2 结束。
@@ -802,6 +908,7 @@ REPL：全局作用域跨输入保持；未闭合的 `{`/`(`/字符串自动续�
 | `round(-2.5)` | -3（away from zero） | -2 | -3 |
 | 作用域赋值 | 向上命中已有绑定，否则当前层新建 | var/let 规则 | let/let mut 就地 |
 | `&&`/`\|\|` 返回值 | 返回操作数 | 返回操作数 | 返回 bool |
+| 类型系统 | 渐进（标注才检查，运行时擦除，any 兜底） | TS 渐进 + JSDoc | 静态强类型 |
 
 ---
 

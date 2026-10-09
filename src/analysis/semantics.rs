@@ -35,6 +35,7 @@ pub const TOKEN_TYPES: &[&str] = &[
     "interface",  // 6
     "class",      // 7
     "namespace",  // 8
+    "type",       // 9：类型标注位置的标识符（VSCode 标准类型，主题缺省回退 entity.name.type）
 ];
 
 /// 一个语义 token（LSP 位置：0-based 行、UTF-16 列）
@@ -125,7 +126,7 @@ fn top_stmts(program: &Stmt) -> &[Stmt] {
 
 /// 全文档解析（着色/定义用，无哨兵）：失败时截到出错行前重试一次；
 /// 返回 (程序 AST, 与之匹配的 token 流)。彻底失败返回 None（回落 TextMate）。
-fn parse_full(src: &str) -> Option<(Stmt, Vec<Token>)> {
+pub(crate) fn parse_full(src: &str) -> Option<(Stmt, Vec<Token>)> {
     let try_one = |text: &str| -> Option<(Stmt, Vec<Token>)> {
         let out = lex_tolerant(text).ok()?;
         let program = Parser::new(out.tokens.clone()).parse_program().ok()?;
@@ -164,6 +165,12 @@ pub(crate) enum NameRole {
     LoopVar,
     /// `impl X` 的目标名（着色同 struct；跳转定义不认它）
     ImplTarget,
+    /// 泛型参数声明：`struct Box<T>` / `impl X<T>` / `function id<T>` 头部
+    /// `<...>` 里的名字。着色交回 TextMate（语法文件已覆盖）；位置供
+    /// 跳转定义按「就近向上」解析引用（方法自带 `<K>` 遮蔽 impl 的 `<T>`）
+    TypeParam,
+    /// 类型标注表达式中的标识符（`number`、`Map<string, number>` 里的每个名字）
+    Type,
     /// 对象字面量键（着色由 AST 走查负责；此处只为跳转定义记录位置）
     ObjectKey,
 }
@@ -178,6 +185,9 @@ impl NameRole {
             NameRole::InterfaceName => 6,
             NameRole::StructField => 4,
             NameRole::LoopVar => 0,
+            NameRole::Type => 9,
+            // 着色由 TextMate 语法文件的 typeparameters 规则负责，扫描不上色
+            NameRole::TypeParam => return None,
             // 着色由 AST 走查的 Object 分支发出，扫描不重复上色
             NameRole::ObjectKey => return None,
         })
@@ -191,6 +201,82 @@ pub(crate) struct NameTok {
     pub role: NameRole,
     /// 方法所属 struct / 字段所属 struct
     pub owner: Option<String>,
+}
+
+// ============ 类型表达式扫描 ============
+
+/// 静默走一个类型表达式（`number`、`Map<string, number>`、`number[]`，
+/// 支持嵌套泛型）：返回结束下标。首 token 不是标识符时原样返回 start
+///（标注写到一半等残缺形态不发射任何 token）。
+pub(crate) fn type_end(tokens: &[Token], start: usize) -> usize {
+    let mut j = start;
+    if !matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
+        return j;
+    }
+    j += 1;
+    if matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::Lt)) {
+        j += 1;
+        loop {
+            match tokens.get(j).map(|t| &t.kind) {
+                Some(TokenKind::Ident(_)) => {
+                    j = type_end(tokens, j); // 递归：泛型参数还可以是泛型
+                }
+                Some(TokenKind::Gt) => {
+                    j += 1;
+                    break;
+                }
+                Some(TokenKind::Comma) => j += 1,
+                _ => return j, // 结构意外：就地停下，避免吞掉后续 token
+            }
+        }
+    }
+    while matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::LBracket))
+        && matches!(tokens.get(j + 1).map(|t| &t.kind), Some(TokenKind::RBracket))
+    {
+        j += 2;
+    }
+    j
+}
+
+/// 把 `[start..end)` 区间内的标识符全部按类型发射（区间来自 [`type_end`]）
+fn emit_type_idents(tokens: &[Token], start: usize, end: usize, out: &mut Vec<NameTok>) {
+    for t in tokens.iter().take(end).skip(start) {
+        if let TokenKind::Ident(name) = &t.kind {
+            out.push(NameTok {
+                span: t.span,
+                name: name.clone(),
+                role: NameRole::Type,
+                owner: None,
+            });
+        }
+    }
+}
+
+/// 扫描泛型参数声明 `<T, U>`：`<` 处开始，返回匹配 `>` 之后的下标，
+/// 每个标识符记为 [`NameRole::TypeParam`]（跳转定义的声明位置）。
+/// 首 token 不是 `<` 时原样返回 start（写到一半的残缺形态不记录）。
+fn scan_type_params(tokens: &[Token], start: usize, out: &mut Vec<NameTok>) -> usize {
+    if !matches!(tokens.get(start).map(|t| &t.kind), Some(TokenKind::Lt)) {
+        return start;
+    }
+    let mut j = start + 1;
+    loop {
+        match tokens.get(j).map(|t| &t.kind) {
+            Some(TokenKind::Ident(name)) => {
+                out.push(NameTok {
+                    span: tokens[j].span,
+                    name: name.clone(),
+                    role: NameRole::TypeParam,
+                    owner: None,
+                });
+                j += 1;
+            }
+            Some(TokenKind::Comma) => j += 1,
+            Some(TokenKind::Gt) => return j + 1,
+            // 结构意外（写到一半 / 语法错误）：就地停下，不吞后续 token
+            _ => return j,
+        }
+    }
 }
 
 /// 大括号上下文
@@ -214,16 +300,25 @@ pub(crate) fn scan_names(tokens: &[Token]) -> Vec<NameTok> {
     while i < len {
         match &tokens[i].kind {
             TokenKind::Keyword(Keyword::Function) => {
-                // 具名函数 / 方法；匿名函数直接进参数
-                if let Some(TokenKind::Ident(name)) = tokens.get(i + 1).map(|t| &t.kind) {
+                // 具名函数 / 方法；匿名函数直接进参数。
+                // `new` 词法上是关键字（`new Point()`），但它是惯用构造器方法名——
+                // 与 parser 的 expect_method_name 对齐：Ident 或 Keyword(New) 都认
+                let (name, nspan) = match tokens.get(i + 1) {
+                    Some(Token { kind: TokenKind::Ident(n), span }) => (Some(n.clone()), *span),
+                    Some(Token { kind: TokenKind::Keyword(Keyword::New), span }) => {
+                        (Some("new".to_string()), *span)
+                    }
+                    _ => (None, Span::default()),
+                };
+                if let Some(name) = name {
                     let (role, owner) = match stack.last() {
                         Some(BraceCtx::Impl(t)) => (NameRole::MethodName, Some(t.clone())),
                         Some(BraceCtx::InterfaceBody) => (NameRole::InterfaceMethod, None),
                         _ => (NameRole::FuncName, None),
                     };
                     out.push(NameTok {
-                        span: tokens[i + 1].span,
-                        name: name.clone(),
+                        span: nspan,
+                        name,
                         role,
                         owner,
                     });
@@ -231,9 +326,20 @@ pub(crate) fn scan_names(tokens: &[Token]) -> Vec<NameTok> {
                 } else {
                     i += 1;
                 }
+                // 泛型参数声明：`function id<T>(...)` / 匿名 `function<T>(...)`
+                i = scan_type_params(tokens, i, &mut out);
                 // 参数列表
                 if matches!(tokens.get(i).map(|t| &t.kind), Some(TokenKind::LParen)) {
                     i = scan_params(tokens, i, &mut out);
+                    // 返回类型标注：`) -> T`（`->` 允许出现在换行之后，与 parser 的 skip_eol 一致）
+                    let mut j = i;
+                    while matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::Eol)) {
+                        j += 1;
+                    }
+                    if matches!(tokens.get(j).map(|t| &t.kind), Some(TokenKind::Arrow)) {
+                        let end = type_end(tokens, j + 1);
+                        emit_type_idents(tokens, j + 1, end, &mut out);
+                    }
                 }
             }
             TokenKind::Keyword(Keyword::Struct) | TokenKind::Keyword(Keyword::Interface) => {
@@ -245,8 +351,8 @@ pub(crate) fn scan_names(tokens: &[Token]) -> Vec<NameTok> {
                         role: if is_struct { NameRole::StructName } else { NameRole::InterfaceName },
                         owner: None,
                     });
-                    // 跳过名字与可选返回标注，压入体上下文
-                    let mut j = i + 2;
+                    // 泛型参数声明 `struct Box<T>`，再跳到体 `{` 压入上下文
+                    let mut j = scan_type_params(tokens, i + 2, &mut out);
                     while j < len && !matches!(tokens[j].kind, TokenKind::LBrace | TokenKind::Eol | TokenKind::Eof) {
                         j += 1;
                     }
@@ -271,7 +377,8 @@ pub(crate) fn scan_names(tokens: &[Token]) -> Vec<NameTok> {
                         role: NameRole::ImplTarget,
                         owner: None,
                     });
-                    let mut j = i + 2;
+                    // 泛型参数声明 `impl X<T>`，再跳到体 `{` 压入上下文
+                    let mut j = scan_type_params(tokens, i + 2, &mut out);
                     while j < len && !matches!(tokens[j].kind, TokenKind::LBrace | TokenKind::Eol | TokenKind::Eof) {
                         j += 1;
                     }
@@ -332,6 +439,32 @@ pub(crate) fn scan_names(tokens: &[Token]) -> Vec<NameTok> {
                             role: NameRole::StructField,
                             owner: Some(owner.clone()),
                         });
+                        // 字段类型标注：`field: T`
+                        if matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::Colon)) {
+                            let end = type_end(tokens, i + 2);
+                            emit_type_idents(tokens, i + 2, end, &mut out);
+                            i = end;
+                            continue;
+                        }
+                    }
+                }
+                // 语句级变量标注：`x: T = v`——标识符在语句起点（前一 token 是
+                // 行尾/分号/`{`/文件开头），`:` 后是类型表达式且以 `=` 收尾。
+                // 三元的 `?:`（前置是 `?`/运算符）与对象字面量键值（ObjectLit
+                // 上下文）都到不了这里，`=` 前瞻再兜一道底。
+                if stack
+                    .last()
+                    .is_none_or(|c| matches!(c, BraceCtx::Block))
+                    && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::Colon))
+                    && (i == 0
+                        || matches!(
+                            tokens[i - 1].kind,
+                            TokenKind::Eol | TokenKind::Semi | TokenKind::LBrace
+                        ))
+                {
+                    let end = type_end(tokens, i + 2);
+                    if matches!(tokens.get(end).map(|t| &t.kind), Some(TokenKind::Assign)) {
+                        emit_type_idents(tokens, i + 2, end, &mut out);
                     }
                 }
                 // 对象字面量键：`{`/`,`/行首 之后、`:` 之前（跳转定义记录用）
@@ -409,6 +542,13 @@ fn scan_params(tokens: &[Token], start: usize, out: &mut Vec<NameTok>) -> usize 
                         role: NameRole::Param,
                         owner: None,
                     });
+                    // 参数类型标注：`param: T`（T 可带泛型与 [] 后缀）
+                    if matches!(tokens.get(j + 1).map(|t| &t.kind), Some(TokenKind::Colon)) {
+                        let end = type_end(tokens, j + 2);
+                        emit_type_idents(tokens, j + 2, end, out);
+                        j = end;
+                        continue;
+                    }
                 }
             }
             _ => {}
@@ -575,7 +715,7 @@ impl<'a> Highlighter<'a> {
             let ty = p
                 .ty
                 .as_ref()
-                .map(|a| infer::ty_from_annotation(a, self.structs))
+                .map(|a| infer::ty_from_ast(a, self.structs))
                 .unwrap_or(Ty::Unknown);
             let detail = format!("{}: {}", p.name, ty.display());
             frame.insert(
@@ -916,7 +1056,18 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
     // 全局/参数：作用域快照查绑定
     let patched = super::tolerate::parse_at_cursor(src, cursor);
     let Some(patched) = patched else {
-        // 解析失败：直接在扫描索引里按名字兜底（函数名/类型名）
+        // 解析失败：在扫描索引里按名字兜底——就近的参数/泛型参数声明，
+        // 再退到函数名/类型名（impl 体内操作数位置等补丁解析不了的场景）
+        if let Some(n) = names.iter().rev().find(|n| {
+            n.role == NameRole::Param && n.name == word && n.span.line <= cursor.line
+        }) {
+            return to_defloc(&map, n.span, &n.name);
+        }
+        if let Some(n) = names.iter().rev().find(|n| {
+            n.role == NameRole::TypeParam && n.name == word && n.span.line <= cursor.line
+        }) {
+            return to_defloc(&map, n.span, &n.name);
+        }
         return names
             .iter()
             .find(|n| n.name == word && matches!(n.role, NameRole::FuncName | NameRole::StructName | NameRole::InterfaceName))
@@ -958,6 +1109,14 @@ pub fn definition(src: &str, line0: usize, char_utf16: usize) -> Option<DefLoc> 
             b.span
         };
         return to_defloc(&map, span, &word);
+    }
+
+    // 泛型参数引用：`val: T` / `-> T` / `TreeNode<T>` 里的 T → 就近向上的
+    // 同名 TypeParam 声明（函数自带的 `<K>` 比 impl 的 `<T>` 近，天然遮蔽）
+    if let Some(n) = names.iter().rev().find(|n| {
+        n.role == NameRole::TypeParam && n.name == word && n.span.line <= cursor.line
+    }) {
+        return to_defloc(&map, n.span, &n.name);
     }
 
     // 无绑定：函数名/类型名兜底（用户函数在定义前被引用等场景）

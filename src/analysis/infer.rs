@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{AssignOp, BinaryOp, Expr, Param, Stmt, UnaryOp};
+use crate::ast::{AssignOp, BinaryOp, Expr, Param, Stmt, TypeAst, UnaryOp};
 
 use super::builtins;
 use super::scope::{Binding, Ctx, StructRegistry};
@@ -96,21 +96,25 @@ impl Ty {
     }
 }
 
-/// 类型标注字符串（`number`、`Point`、`Map<string, number>`、`number[]`）→ Ty。
-/// 语言不强制写法：识别不了的标识符，若在 struct 注册表中则视为其实例，否则 Unknown。
-pub fn ty_from_annotation(ann: &str, structs: &StructRegistry) -> Ty {
-    let mut s = ann.trim();
-    let mut array = false;
-    if s.ends_with("[]") {
-        array = true;
-        s = s[..s.len() - 2].trim();
+/// 类型标注 AST → 编辑器近似 Ty（桥接期实现）。
+/// 语言不强制写法：联合/函数类型保守回退（完整语义在核心 checker），
+/// 识别不了的标识符若在 struct 注册表中则视为其实例，否则 Unknown。
+pub fn ty_from_ast(ann: &TypeAst, structs: &StructRegistry) -> Ty {
+    match ann {
+        TypeAst::Union(..) => Ty::Unknown,
+        TypeAst::Object(..) => Ty::Object(Rc::new(Vec::new())),
+        TypeAst::Func { ret, .. } => Ty::Func(
+            ret.as_ref().map(|r| Box::new(ty_from_ast(r, structs))),
+        ),
+        TypeAst::Array(..) => Ty::Array,
+        TypeAst::Named(n, _) => named_ty(n, structs),
+        TypeAst::Generic(n, _, _) => named_ty(n, structs),
     }
-    // 去掉泛型参数 <...>
-    if let Some(lt) = s.find('<') {
-        s = s[..lt].trim();
-    }
-    let base = match s {
-        "" | "any" => Ty::Unknown,
+}
+
+fn named_ty(s: &str, structs: &StructRegistry) -> Ty {
+    match s {
+        "any" | "unknown" => Ty::Unknown,
         "Array" => Ty::Array,
         _ => Ty::from_type_name(s).unwrap_or_else(|| {
             if structs.contains(s) {
@@ -119,11 +123,6 @@ pub fn ty_from_annotation(ann: &str, structs: &StructRegistry) -> Ty {
                 Ty::Unknown
             }
         }),
-    };
-    if array {
-        Ty::Array
-    } else {
-        base
     }
 }
 
@@ -223,7 +222,7 @@ fn infer_depth(expr: &Expr, ctx: &Ctx, depth: usize) -> Ty {
         Expr::Function { params: _, ret, body, .. } => {
             let ret_ty = ret
                 .as_ref()
-                .map(|a| ty_from_annotation(a, ctx.structs))
+                .map(|a| ty_from_ast(a, ctx.structs))
                 .or_else(|| body_return(body, ctx, depth + 1));
             Ty::Func(ret_ty.map(Box::new))
         }
@@ -268,7 +267,7 @@ fn member_ty(recv: &Ty, name: &str, ctx: &Ctx, depth: usize) -> Ty {
                     return p
                         .ty
                         .as_ref()
-                        .map(|a| ty_from_annotation(a, ctx.structs))
+                        .map(|a| ty_from_ast(a, ctx.structs))
                         .unwrap_or(Ty::Unknown);
                 }
                 if let Some(m) = info.methods.iter().find(|m| m.name == name) {
@@ -285,7 +284,7 @@ fn member_ty(recv: &Ty, name: &str, ctx: &Ctx, depth: usize) -> Ty {
 /// struct 方法返回类型：`-> T` 标注优先，否则从 return 语句推导
 fn method_ret_ty(m: &super::scope::FuncInfo, ctx: &Ctx, depth: usize) -> Ty {
     if let Some(ann) = &m.ret {
-        return ty_from_annotation(ann, ctx.structs);
+        return ty_from_ast(ann, ctx.structs);
     }
     body_return(&m.body, ctx, depth + 1).unwrap_or(Ty::Unknown)
 }
@@ -357,7 +356,7 @@ pub fn function_return(params: &[Param], body: &Stmt, ctx: &Ctx) -> Option<Ty> {
         let ty = p
             .ty
             .as_ref()
-            .map(|a| ty_from_annotation(a, ctx.structs))
+            .map(|a| ty_from_ast(a, ctx.structs))
             .unwrap_or(Ty::Unknown);
         frame.insert(
             p.name.clone(),
@@ -408,7 +407,7 @@ pub fn params_sig(params: &[Param]) -> String {
 }
 
 /// 函数签名串：`function name(a: number, b) -> number`
-pub fn func_sig(name: &str, params: &[Param], ret: Option<&String>) -> String {
+pub fn func_sig(name: &str, params: &[Param], ret: Option<&TypeAst>) -> String {
     let mut s = format!("function {}({})", name, params_sig(params));
     if let Some(r) = ret {
         s.push_str(&format!(" -> {}", r));

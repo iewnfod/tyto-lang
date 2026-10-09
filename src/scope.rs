@@ -9,25 +9,43 @@ pub type ScopeRef = Rc<RefCell<Scope>>;
 /// 读：沿链向上查找，找不到报错。
 /// 赋值：先沿链向上找**已存在的绑定**（函数内 `h_low = ...` 命中全局的 `h_low`），
 /// 找不到则在**当前作用域新建**（`val = ...` 成为局部变量）——Lua 式规则。
+/// 常量：`const` 声明的名字登记在所在层，任何对其的赋值都是运行时错误。
 #[derive(Debug)]
 pub struct Scope {
     vars: HashMap<String, Value>,
+    consts: std::collections::HashSet<String>,
     parent: Option<ScopeRef>,
 }
 
 impl Scope {
     pub fn root() -> ScopeRef {
-        Rc::new(RefCell::new(Scope { vars: HashMap::new(), parent: None }))
+        Rc::new(RefCell::new(Scope {
+            vars: HashMap::new(),
+            consts: std::collections::HashSet::new(),
+            parent: None,
+        }))
     }
 
     pub fn child(parent: ScopeRef) -> ScopeRef {
-        Rc::new(RefCell::new(Scope { vars: HashMap::new(), parent: Some(parent) }))
+        Rc::new(RefCell::new(Scope {
+            vars: HashMap::new(),
+            consts: std::collections::HashSet::new(),
+            parent: Some(parent),
+        }))
     }
 }
 
 /// 在当前作用域定义/覆盖绑定
 pub fn define(scope: &ScopeRef, name: impl Into<String>, value: Value) {
     scope.borrow_mut().vars.insert(name.into(), value);
+}
+
+/// 在当前作用域定义常量（后续对其赋值报运行时错误）
+pub fn define_const(scope: &ScopeRef, name: impl Into<String>, value: Value) {
+    let name = name.into();
+    let mut s = scope.borrow_mut();
+    s.consts.insert(name.clone());
+    s.vars.insert(name, value);
 }
 
 /// 读变量：沿链向上
@@ -45,20 +63,29 @@ pub fn get(scope: &ScopeRef, name: &str) -> RtResult<Value> {
     }
 }
 
-/// 赋值：向上找已存在绑定则写入，否则在**发起赋值的作用域**新建
-pub fn assign(scope: &ScopeRef, name: &str, value: Value) {
+/// 赋值：向上找已存在绑定则写入（命中常量报错），否则在**发起赋值的作用域**新建
+pub fn assign(scope: &ScopeRef, name: &str, value: Value) -> RtResult<()> {
     let mut cur = scope.clone();
     loop {
-        if cur.borrow().vars.contains_key(name) {
+        let (hit, is_const, parent) = {
+            let s = cur.borrow();
+            (s.vars.contains_key(name), s.consts.contains(name), s.parent.clone())
+        };
+        if hit {
+            if is_const {
+                return Err(RtError::runtime(
+                    None,
+                    format!("cannot assign to constant `{}`", name),
+                ));
+            }
             cur.borrow_mut().vars.insert(name.to_string(), value);
-            return;
+            return Ok(());
         }
-        let parent = cur.borrow().parent.clone();
         match parent {
             Some(p) => cur = p,
             None => {
                 define(scope, name, value);
-                return;
+                return Ok(());
             }
         }
     }

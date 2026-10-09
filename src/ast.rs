@@ -43,12 +43,116 @@ pub enum AssignOp {
     Nullish,
 }
 
+/// 声明关键字：`let x = v` / `const x = v`（普通赋值为 None）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclKind {
+    Let,
+    Const,
+}
+
+/// 结构化类型标注（渐进类型系统的语法表示）。
+///
+/// 运行时擦除（解释器只认值不认类型）；编辑器分析与 checker 消费。
+/// `Display` 产出规范串（`Map<string, number>`、`number | null`），
+/// 与源码书写风格无关。
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeAst {
+    /// 基础/命名类型：`number`、`Point`、泛型参数 `T`
+    Named(String, Span),
+    /// 数组后缀：`T[]`
+    Array(Box<TypeAst>, Span),
+    /// 泛型应用：`Array<T>`、`Map<K, V>`、`Box<T>`
+    Generic(String, Vec<TypeAst>, Span),
+    /// 联合：`A | B | C`
+    Union(Vec<TypeAst>, Span),
+    /// 结构化对象类型：`{x: number, y: string}`
+    Object(Vec<(String, TypeAst)>, Span),
+    /// 函数类型：`(a: number, b: string) -> bool`（ret None = 无返回标注）
+    Func {
+        params: Vec<(String, TypeAst)>,
+        ret: Option<Box<TypeAst>>,
+        span: Span,
+    },
+}
+
+impl TypeAst {
+    pub fn span(&self) -> Span {
+        match self {
+            TypeAst::Named(_, s)
+            | TypeAst::Array(_, s)
+            | TypeAst::Generic(_, _, s)
+            | TypeAst::Union(_, s)
+            | TypeAst::Object(_, s)
+            | TypeAst::Func { span: s, .. } => *s,
+        }
+    }
+}
+
+impl std::fmt::Display for TypeAst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeAst::Named(n, _) => write!(f, "{}", n),
+            TypeAst::Array(t, _) => {
+                // 联合/函数类型作元素时补括号，保证回显不变形（`(A | B)[]`）
+                if matches!(**t, TypeAst::Union(..) | TypeAst::Func { .. }) {
+                    write!(f, "({})[]", t)
+                } else {
+                    write!(f, "{}[]", t)
+                }
+            }
+            TypeAst::Generic(n, args, _) => {
+                write!(f, "{}<", n)?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", a)?;
+                }
+                write!(f, ">")
+            }
+            TypeAst::Union(ms, _) => {
+                for (i, m) in ms.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{}", m)?;
+                }
+                Ok(())
+            }
+            TypeAst::Object(fields, _) => {
+                write!(f, "{{")?;
+                for (i, (n, t)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", n, t)?;
+                }
+                write!(f, "}}")
+            }
+            TypeAst::Func { params, ret, .. } => {
+                write!(f, "(")?;
+                for (i, (n, t)) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", n, t)?;
+                }
+                write!(f, ")")?;
+                if let Some(r) = ret {
+                    write!(f, " -> {}", r)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 /// 参数 / struct 字段：名字 + 可选类型标注。
-/// 标注是纯文档性质（为清晰与将来的类型推导保留），运行时完全不检查。
+/// 运行时擦除（`Param::names` 只取名字）；类型检查在 checker（编辑器/check 期）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
-    pub ty: Option<String>,
+    pub ty: Option<TypeAst>,
 }
 
 impl Param {
@@ -136,7 +240,9 @@ pub enum Expr {
     /// 匿名函数 `function(x) { ... }`；params 可带 `: T` 标注，`-> T` 标注返回类型
     Function {
         params: Vec<Param>,
-        ret: Option<String>,
+        /// 泛型参数声明 `function<T>(x: T) -> T`
+        type_params: Vec<String>,
+        ret: Option<TypeAst>,
         body: Rc<Stmt>,
         span: Span,
     },
@@ -179,6 +285,14 @@ pub enum ForIter {
     Expr(Expr),
 }
 
+/// interface 方法签名：名字 + 完整参数/返回类型（运行时 `is` 检查只看方法名）
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceMethod {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret: Option<TypeAst>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expr(Expr, Span),
@@ -186,8 +300,10 @@ pub enum Stmt {
         target: Expr,
         op: AssignOp,
         value: Expr,
-        /// `x: T = v` 的类型标注（仅普通变量的首次标注赋值非 None，运行时忽略）
-        ann: Option<String>,
+        /// `x: T = v` / `let x: T = v` 的类型标注（None = 未标注）
+        ann: Option<TypeAst>,
+        /// `let` / `const` 声明（None = 普通赋值）
+        decl: Option<DeclKind>,
         span: Span,
     },
     If {
@@ -219,28 +335,35 @@ pub enum Stmt {
     FuncDecl {
         name: String,
         params: Vec<Param>,
-        /// `-> T` 返回类型标注（运行时忽略）
-        ret: Option<String>,
+        /// 泛型参数声明 `function id<T>(x: T) -> T`
+        type_params: Vec<String>,
+        /// `-> T` 返回类型标注
+        ret: Option<TypeAst>,
         body: Rc<Stmt>,
         span: Span,
     },
     /// `struct Point { x, y }`：字段声明（实例字段默认 null），可带 `: T` 标注
     Struct {
         name: String,
+        /// 泛型参数声明 `struct Box<T> { v: T }`
+        type_params: Vec<String>,
         fields: Vec<Param>,
         span: Span,
     },
     /// `impl Point { function ... }`：methods 全部为 FuncDecl（parser 保证），
-    /// 执行时逐个挂到 struct 的方法表
+    /// 执行时逐个挂到 struct 的方法表。
+    /// type_params：`impl TreeNode<T>` 声明的泛型参数（方法标注可引用；
+    /// 名字约定与 struct 声明一致，v1 不做改名映射）
     Impl {
         target: String,
+        type_params: Vec<String>,
         methods: Vec<Stmt>,
         span: Span,
     },
-    /// `interface Shape { function area() }`：方法名签名（无体，纯声明）
+    /// `interface Shape { function area() -> number }`：方法签名（无体，纯声明）
     Interface {
         name: String,
-        methods: Vec<String>,
+        methods: Vec<InterfaceMethod>,
         span: Span,
     },
     Return {
