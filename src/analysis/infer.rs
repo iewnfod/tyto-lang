@@ -251,8 +251,8 @@ fn member_ty(recv: &Ty, name: &str, ctx: &Ctx, depth: usize) -> Ty {
         Ty::Namespace(ns) => {
             // fs.x / sys.x 是函数；返回类型查表
             builtins::namespace_fns(ns)
-                .and_then(|fns| fns.iter().find(|f| f.name == name))
-                .map(|f| f.ret.clone())
+                .and_then(|fns| fns.iter().find(|f| f.name == name).cloned())
+                .map(|f| f.ret)
                 .unwrap_or(Ty::Unknown)
         }
         Ty::Object(fields) => fields

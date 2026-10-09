@@ -17,7 +17,7 @@ import os
 BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "target", "debug", "tyto")
 
 TOKEN_TYPES = ["variable", "parameter", "function", "method", "property",
-               "struct", "interface", "class", "namespace"]
+               "struct", "interface", "class", "namespace", "type"]
 
 DOC_MEMBER = 's = "hello"\nm = new Map()\nobj = {\n    n: 1,\n}\np = new Point(1, 2)\nstruct Point {\n    x,\n    y,\n}\nimpl Point {\n    function len() -> number {\n        return 1\n    }\n}\nq = s.'
 

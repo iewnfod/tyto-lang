@@ -80,6 +80,51 @@ impl TokenKind {
     }
 }
 
+pub(crate) fn operator_table() -> &'static [(&'static str, TokenKind)] {
+    use TokenKind::*;
+    &[
+        ("..=", DotDotEq),
+        ("??=", QuestionQuestionAssign),
+        ("?.", QuestionDot),
+        ("??", QuestionQuestion),
+        ("<=", Lte),
+        (">=", Gte),
+        ("==", Eq),
+        ("!=", Neq),
+        ("&&", AndAnd),
+        ("||", OrOr),
+        ("+=", AddAssign),
+        ("-=", SubAssign),
+        ("*=", MulAssign),
+        ("/=", DivAssign),
+        ("%=", ModAssign),
+        ("..", DotDot),
+        ("->", Arrow),
+        ("+", Plus),
+        ("-", Minus),
+        ("*", Star),
+        ("/", Slash),
+        ("%", Percent),
+        ("<", Lt),
+        (">", Gt),
+        ("=", Assign),
+        ("!", Not),
+        ("|", Pipe),
+        (".", Dot),
+        ("?", Question),
+        (":", Colon),
+        (",", Comma),
+        (";", Semi),
+        ("(", LParen),
+        (")", RParen),
+        ("[", LBracket),
+        ("]", RBracket),
+        ("{", LBrace),
+        ("}", RBrace),
+    ]
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Keyword {
     Function,
