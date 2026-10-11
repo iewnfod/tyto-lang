@@ -252,6 +252,68 @@ fn hover_map_annotated_member() {
     assert!(h.signature.contains("get"), "got {}", h.signature);
 }
 
+// ============ 可空联合接收者：循环下钻不退化 ============
+
+/// 用户场景（examples/tree.tyto 最小化）：`cur = self.root` 后在 while 里
+/// 沿 left/right 下钻。`cur = cur.left` 之后 cur 是 `TreeNode | null`，
+/// 对它的成员访问 / 补全 / 悬停不应因此退化为 any。
+const TREE_LOOP: &str = "\
+struct TreeNode<T> {
+    val: T,
+    left: TreeNode<T> | null,
+    right: TreeNode<T> | null,
+}
+impl TreeNode<T> {
+    function new(val: T) {
+        self.val = val
+    }
+}
+struct BinarySearchTree<T> {
+    root: TreeNode<T>,
+}
+impl BinarySearchTree<T> {
+    function search(val: T) -> TreeNode<T> | null {
+        cur = self.root
+        while cur != null {
+            if val < cur.val {
+                cur = cur.left
+            } else if val > cur.val {
+                cur = cur.right
+            } else {
+                break
+            }
+        }
+        return cur
+    }
+}
+";
+
+#[test]
+fn nullable_union_hover_keeps_type_in_loop() {
+    // 循环体内 if 条件里的 cur：应保持 TreeNode<...> | null，而非 any
+    let src = TREE_LOOP.replace("if val < cur.val", "if val < §cur.val");
+    let h = hover_at(&src).expect("cur 应可悬停");
+    assert!(
+        h.signature.starts_with("**cur: TreeNode"),
+        "cur 类型退化：{}",
+        h.signature
+    );
+    assert!(h.signature.contains("| null"), "应保留可空联合：{}", h.signature);
+}
+
+#[test]
+fn nullable_union_completion_keeps_fields_in_loop() {
+    // else-if 分支里 cur.：应给 TreeNode 字段，而非退化为全量方法池
+    let src = TREE_LOOP.replace("cur = cur.right", "cur = cur.§");
+    let items = complete_at(&src);
+    for f in ["val", "left", "right"] {
+        let item = find(&items, f).unwrap_or_else(|| panic!("缺字段 {f}"));
+        assert_eq!(item.kind, ItemKind::Field);
+    }
+    assert!(find(&items, "map").is_none(), "不应退化为全量方法池");
+    assert!(find(&items, "to_uppercase").is_none(), "不应出现 string 方法");
+}
+
 // ============ struct / 对象字面量成员 ============
 
 #[test]

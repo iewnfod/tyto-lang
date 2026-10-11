@@ -1,7 +1,7 @@
 struct TreeNode<T> {
     val: T,
-    left: TreeNode | null,
-    right: TreeNode | null,
+    left: TreeNode<T> | null,
+    right: TreeNode<T> | null,
 }
 
 impl TreeNode<T> {
@@ -9,3 +9,51 @@ impl TreeNode<T> {
         self.val = val
     }
 }
+
+struct BinarySearchTree<T> {
+    root: TreeNode<T>,
+}
+
+impl BinarySearchTree<T> {
+    function new(root_val: T) {
+        self.root = new TreeNode(root_val);
+    }
+
+    function search(val: T) -> TreeNode<T> | null {
+        cur = self.root;
+        while cur != null {
+            if val < cur.val {
+                cur = cur.left;
+            } else if val > cur.val {
+                cur = cur.right;
+            } else {
+                break
+            }
+        }
+        return cur;
+    }
+
+    function insert(val: T) {
+        par = null;
+        cur = self.root;
+        while cur != null {
+            par = cur;
+            if val < cur.val {
+                cur = cur.left;
+            } else {
+                cur = cur.right;
+            }
+        }
+        node = new TreeNode(val);
+        if val < par.val {
+            par.left = node;
+        } else {
+            par.right = node;
+        }
+    }
+}
+
+tree = new BinarySearchTree(213);
+tree.insert(123);
+tree.insert(321)
+println(tree);

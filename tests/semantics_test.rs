@@ -96,6 +96,48 @@ l = a.len()
 }
 
 #[test]
+fn colors_nullable_union_members_in_loop() {
+    // 循环下钻惯用形：cur 在 cur = cur.left 后是 TreeNode | null，
+    // 其后的成员访问（cur.right）照常着色，不因联合含 null 退化
+    let src = "\
+struct TreeNode<T> {
+    val: T,
+    left: TreeNode<T> | null,
+    right: TreeNode<T> | null,
+}
+impl TreeNode<T> {
+    function new(val: T) {
+        self.val = val
+    }
+}
+struct BinarySearchTree<T> {
+    root: TreeNode<T>,
+}
+impl BinarySearchTree<T> {
+    function search(val: T) -> TreeNode<T> | null {
+        cur = self.root
+        while cur != null {
+            if val < cur.val {
+                cur = cur.left
+            } else if val > cur.val {
+                cur = cur.right
+            } else {
+                break
+            }
+        }
+        return cur
+    }
+}
+";
+    let m = token_map(src);
+    assert_eq!(m.get(&(17, 25)), Some(&"property"), "if 条件里 cur.val 的 val");
+    assert_eq!(m.get(&(18, 26)), Some(&"property"), "cur.left 的 left");
+    assert_eq!(m.get(&(19, 32)), Some(&"property"), "else-if 条件里 cur.val 的 val");
+    assert_eq!(m.get(&(20, 22)), Some(&"variable"), "cur.right 的 cur");
+    assert_eq!(m.get(&(20, 26)), Some(&"property"), "cur.right 的 right");
+}
+
+#[test]
 fn colors_object_literal_keys_by_value_kind() {
     let src = "\
 counter = {

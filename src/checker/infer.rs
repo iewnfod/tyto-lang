@@ -262,15 +262,24 @@ impl Checker {
             Type::Union(ms) => {
                 let mut results = Vec::new();
                 for m in ms.iter() {
-                    // null 成员在 ?. 下已剔除；普通成员访问 null 直接放行 Any（运行时报）
-                    if matches!(m, Type::Null | Type::Any | Type::TypeVar(_)) {
-                        return Type::Any;
+                    match m {
+                        // null 臂跳过：该臂运行时直接报错，不参与成员交集——
+                        // `while cur != null { cur = cur.left }` 惯用形里
+                        // `cur: TreeNode | null` 的成员访问不应因此退化为 any
+                        Type::Null => continue,
+                        // any / 泛型参数臂不可知：整次访问不可知
+                        Type::Any | Type::TypeVar(_) => return Type::Any,
+                        _ => {}
                     }
                     let t = self.member_ty(m, name, span, optional);
                     if t.is_any() {
                         return Type::Any;
                     }
                     results.push(t);
+                }
+                // 全 null 联合（规范化后罕见）：不可知
+                if results.is_empty() {
+                    return Type::Any;
                 }
                 normalize_union(results)
             }

@@ -32,6 +32,7 @@ use super::ty_view::{assign_result_ty, editor_display, func_sig};
 use super::ItemKind;
 use self::walker::{register_globals_ambient, Walker};
 
+
 // struct/interface 注册表已迁入核心 checker（事实来源单一化），这里转发
 pub use crate::checker::registry::{
     collect_registry, FuncInfo, StructInfo, StructRegistry,
@@ -148,6 +149,42 @@ fn chain_find<'b>(scopes: &'b [HashMap<String, Binding>], name: &str) -> Option<
     scopes.iter().rev().find_map(|s| s.get(name))
 }
 
+/// 表达式里是否含哨兵：光标所在语句的 RHS 未写完，推导不可信，
+/// 其赋值效果不应覆盖链上绑定（保留旧类型优于退化为 any）。
+fn contains_sentinel(e: &Expr) -> bool {
+    match e {
+        Expr::Ident(n, _) => n == SENTINEL,
+        Expr::Member { target, name, .. } | Expr::OptionalMember { target, name, .. } => {
+            name == SENTINEL || contains_sentinel(target)
+        }
+        Expr::Call { callee, args, .. } => {
+            contains_sentinel(callee) || args.iter().any(contains_sentinel)
+        }
+        Expr::New { class, args, .. } => {
+            contains_sentinel(class) || args.iter().any(contains_sentinel)
+        }
+        Expr::Array(es, _) => es.iter().any(contains_sentinel),
+        Expr::Object(fs, _) => fs.iter().any(|(_, v)| contains_sentinel(v)),
+        Expr::Binary { left, right, .. } | Expr::Logic { left, right, .. } => {
+            contains_sentinel(left) || contains_sentinel(right)
+        }
+        Expr::Unary { operand, .. } => contains_sentinel(operand),
+        Expr::Ternary { cond, then_expr, else_expr, .. } => {
+            contains_sentinel(cond) || contains_sentinel(then_expr) || contains_sentinel(else_expr)
+        }
+        Expr::Index { target, index, .. } => contains_sentinel(target) || contains_sentinel(index),
+        Expr::Slice { target, start, end, .. } => {
+            contains_sentinel(target)
+                || [start, end]
+                    .into_iter()
+                    .flatten()
+                    .any(|e| contains_sentinel(e))
+        }
+        Expr::Is { operand, target, .. } => contains_sentinel(operand) || contains_sentinel(target),
+        _ => false,
+    }
+}
+
 /// 叶子语句（赋值 / 函数声明 / struct / interface）的绑定登记 + 声明位置记录。
 /// 光标走查（scope::Walker）与全文档着色走查（semantics::Highlighter）共用。
 /// 类型推导经引擎（`ck`），编辑器绑定与引擎镜像成对登记。
@@ -162,6 +199,11 @@ pub(crate) fn register_leaf(
                 // 对象字段 / 索引赋值不引入新绑定
                 return;
             };
+            // RHS 含哨兵（`x = x.__tyto_cx__` 光标语句）：赋值效果未知，
+            // 不覆盖链上绑定——成员补全靠旧类型找接收者，退化 any 会毒化下游
+            if contains_sentinel(value) {
+                return;
+            }
             let rhs = ck.infer(value);
             let new_ty = if let Some(a) = ann {
                 ck.ann_ty(a)
