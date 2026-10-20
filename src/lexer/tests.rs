@@ -109,6 +109,18 @@ fn eol_suppressed_after_operator() {
 }
 
 #[test]
+fn eol_after_postfix_non_null_assert() {
+    // 后缀 `!` 能结束语句：x! 之后换行发 Eol
+    let ks = kinds("y = x!\nz = 2").unwrap();
+    assert_eq!(ks.iter().filter(|k| **k == Eol).count(), 1, "{:?}", ks);
+
+    // 两条语句的分界仍看前一 token：b 之后发 Eol，!c 保持前缀逻辑非
+    let ks = kinds("a = b\n!c").unwrap();
+    let eol_pos = ks.iter().position(|k| *k == Eol).unwrap();
+    assert_eq!(&ks[..eol_pos], &[Ident(String::from("a")), Assign, Ident(String::from("b"))], "{:?}", ks);
+}
+
+#[test]
 fn eol_suppressed_before_leading_dot_chain() {
     let ks = kinds("arr\n  .map(f)\n  .len()").unwrap();
     assert!(!ks[..].contains(&Eol), "{:?}", ks);

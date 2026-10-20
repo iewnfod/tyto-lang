@@ -105,6 +105,18 @@ impl Interpreter {
                     self.get_member(&recv, name, *span)
                 }
             }
+            // x!：非空断言——null 触发运行时错误（EMPTY 哨兵不触发，与 ?? / ?. 对齐）
+            Expr::NonNullAssert { operand, span } => {
+                let v = self.evaluate(operand)?;
+                if matches!(v, Value::Null) {
+                    Err(RtError::runtime(
+                        Some(*span),
+                        "cannot assert non-null on null".to_string(),
+                    ))
+                } else {
+                    Ok(v)
+                }
+            }
             Expr::Call { callee, args, span } => {
                 let mut argv = Vec::with_capacity(args.len());
                 for a in args {

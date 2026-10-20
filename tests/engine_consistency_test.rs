@@ -108,3 +108,13 @@ fn annotated_function_call_agrees_with_type_table() {
     let detail = binding_detail(src, "g");
     assert_eq!(detail, "g: number[]");
 }
+
+#[test]
+fn non_null_assert_binding_agrees_with_type_table() {
+    // `!` 收窄：两侧对 n! 一致给出 number（镜像链走查 NonNullAssert 的防线）
+    assert_binding_matches_table(
+        "n: number | null = null\nm = n!\n§",
+        "m",
+        "n!",
+    );
+}

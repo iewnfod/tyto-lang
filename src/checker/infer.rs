@@ -168,6 +168,8 @@ impl Checker {
                 let recv = without_null(&recv);
                 self.member_ty(&recv, name, *span, true)
             }
+            // x!：非空断言——类型层面去除 null 分支（与 ?? / ?. 共用收窄）
+            Expr::NonNullAssert { operand, .. } => without_null(&self.infer(operand)),
             Expr::Call { callee, args, span } => self.check_call(callee, args, *span),
             Expr::New { class, args, span } => self.check_new(class, args, *span),
             Expr::Is { operand, target, .. } => {

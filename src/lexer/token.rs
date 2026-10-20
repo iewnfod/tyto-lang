@@ -64,6 +64,9 @@ pub enum TokenKind {
 impl TokenKind {
     /// 该类 token 是否可能是一个表达式/语句的结尾。
     /// EOL 抑制规则的核心：只有能结尾的 token 之后才发 Eol。
+    ///
+    /// `!` 在列是后缀非空断言（`x!`）的结尾需求；代价是前缀逻辑非
+    /// 之后直接换行（`if !\ncond`）不再续行——词法无上下文，无法两全。
     pub fn can_end_expr(&self) -> bool {
         matches!(
             self,
@@ -73,6 +76,7 @@ impl TokenKind {
                 | TokenKind::Keyword(Keyword::True)
                 | TokenKind::Keyword(Keyword::False)
                 | TokenKind::Keyword(Keyword::Null)
+                | TokenKind::Not
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::RBrace

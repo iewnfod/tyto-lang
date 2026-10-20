@@ -220,6 +220,11 @@ pub enum Expr {
         name: String,
         span: Span,
     },
+    /// `x!`：非空断言——类型层面去除 null 分支；运行时遇 null 报错
+    NonNullAssert {
+        operand: Box<Expr>,
+        span: Span,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
@@ -266,6 +271,7 @@ impl Expr {
             | Expr::Slice { span, .. }
             | Expr::Member { span, .. }
             | Expr::OptionalMember { span, .. }
+            | Expr::NonNullAssert { span, .. }
             | Expr::Call { span, .. }
             | Expr::New { span, .. }
             | Expr::Is { span, .. }

@@ -65,6 +65,9 @@ fn no_span_expr(e: Expr) -> Expr {
         Expr::OptionalMember { target, name, .. } => {
             Expr::OptionalMember { target: Box::new(no_span_expr(*target)), name, span: d }
         }
+        Expr::NonNullAssert { operand, .. } => {
+            Expr::NonNullAssert { operand: Box::new(no_span_expr(*operand)), span: d }
+        }
         Expr::Call { callee, args, .. } => Expr::Call {
             callee: Box::new(no_span_expr(*callee)),
             args: args.into_iter().map(no_span_expr).collect(),
@@ -260,6 +263,72 @@ fn unary_chain() {
     assert!(matches!(e, Expr::Unary { op: UnaryOp::Not, operand, .. } if matches!(*operand, Expr::Call { .. })));
     // - -x
     assert!(matches!(expr("- -x"), Expr::Unary { op: UnaryOp::Neg, operand, .. } if matches!(*operand, Expr::Unary { op: UnaryOp::Neg, .. })));
+}
+
+#[test]
+fn non_null_assert() {
+    // x!：后缀断言
+    assert!(matches!(
+        expr("x!"),
+        Expr::NonNullAssert { operand, .. } if matches!(*operand, Expr::Ident(..))
+    ));
+    // 前缀逻辑非不受影响：!x 仍是 Unary(Not)
+    assert!(matches!(expr("!x"), Expr::Unary { op: UnaryOp::Not, .. }));
+    // 前后缀叠加：!x! → Unary(Not, NonNullAssert(x))
+    assert!(matches!(
+        expr("!x!"),
+        Expr::Unary { op: UnaryOp::Not, operand, .. }
+            if matches!(*operand, Expr::NonNullAssert { .. })
+    ));
+    // 断言先于成员链与算术：x!.len()、x! + 1
+    assert!(matches!(
+        expr("x!.len()"),
+        Expr::Call { callee, .. } if matches!(&*callee, Expr::Member { target, .. }
+            if matches!(&**target, Expr::NonNullAssert { .. }))
+    ));
+    assert!(matches!(
+        expr("x! + 1"),
+        Expr::Binary { left, op: BinaryOp::Add, .. }
+            if matches!(*left, Expr::NonNullAssert { .. })
+    ));
+    // 可作用于调用与索引结果
+    assert!(matches!(
+        expr("f(a!)[i]!"),
+        Expr::NonNullAssert { operand, .. } if matches!(*operand, Expr::Index { .. })
+    ));
+}
+
+#[test]
+fn non_null_assert_statement_end() {
+    // 语句结尾的 x! 之后换行正常终结（EOL 抑制）
+    let p = program("x = 1\ny = x!\nz = 2\n");
+    let stmts = match &p {
+        Stmt::Block { stmts, .. } => stmts,
+        other => panic!("expected Block, got {:?}", other),
+    };
+    assert_eq!(stmts.len(), 3);
+    assert!(matches!(
+        &stmts[1],
+        Stmt::Assign { value, .. } if matches!(value, Expr::NonNullAssert { .. })
+    ));
+    // 前缀逻辑非语句仍跨两行切分正确：b\n!c
+    let p = program("a = b\n!c\n");
+    let stmts = match &p {
+        Stmt::Block { stmts, .. } => stmts,
+        other => panic!("expected Block, got {:?}", other),
+    };
+    assert_eq!(stmts.len(), 2);
+    assert!(matches!(
+        &stmts[1],
+        Stmt::Expr(Expr::Unary { op: UnaryOp::Not, .. }, _)
+    ));
+}
+
+#[test]
+fn non_null_assert_not_assignable() {
+    // x! = 1：断言不是赋值目标
+    let err = std::panic::catch_unwind(|| program("x! = 1\n")).is_err();
+    assert!(err, "x! = 1 should be a parse error");
 }
 
 #[test]

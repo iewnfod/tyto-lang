@@ -226,6 +226,12 @@ impl Parser {
                     let span = expr.span();
                     expr = Expr::OptionalMember { target: Box::new(expr), name, span };
                 }
+                // 后缀非空断言 `x!`：与前置逻辑非共用 token，按位置区分（前缀在 parse_unary）
+                Some(TokenKind::Not) => {
+                    self.advance();
+                    let span = expr.span();
+                    expr = Expr::NonNullAssert { operand: Box::new(expr), span };
+                }
                 _ => return Ok(expr),
             }
         }

@@ -305,7 +305,9 @@ impl<'a> Walker<'a> {
                     self.walk_expr(right, scopes);
                 }
             }
-            Expr::Unary { operand, .. } => self.walk_expr(operand, scopes),
+            Expr::Unary { operand, .. } | Expr::NonNullAssert { operand, .. } => {
+                self.walk_expr(operand, scopes)
+            }
             Expr::Ternary { cond, then_expr, else_expr, .. } => {
                 self.walk_expr(cond, scopes);
                 if then_expr.span() <= self.s {

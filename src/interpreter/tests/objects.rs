@@ -113,6 +113,30 @@ fn nullish_coalescing() {
 }
 
 #[test]
+fn non_null_assert_runtime() {
+    // 非 null：透传
+    assert_eq!(run("x = 5\nprintln(x!)"), "5\n");
+    assert_eq!(run("p = {a: 1}\nprintln(p!.a)"), "1\n");
+    // 配合收窄：map 取值断言后参与算术
+    assert_eq!(run("m = new Map()\nm.insert(\"k\", 3)\nprintln(m.get(\"k\")! + 1)"), "4\n");
+    // null：运行时错误（真断言，非静默擦除）
+    assert!(matches!(run_err("y = null\nprintln(y!)"), RtError::Runtime { .. }));
+    assert!(matches!(run_err("m = new Map()\nprintln(m.get(\"miss\")!)"), RtError::Runtime { .. }));
+    // 错误消息面向用户
+    let e = run_err("y = null\ny!");
+    match e {
+        RtError::Runtime { message, .. } => {
+            assert!(message.contains("non-null"), "unexpected message: {}", message);
+        }
+        other => panic!("expected runtime error, got {:?}", other),
+    }
+    // EMPTY 哨兵不触发（与 ?? / ?. 对齐）
+    assert_eq!(run("s = new Stack()\nprintln(s.pop()!)"), "EMPTY\n");
+    // 前缀逻辑非不受影响
+    assert_eq!(run("println(!false)"), "true\n");
+}
+
+#[test]
 fn nullish_assign() {
     assert_eq!(run("x = null\nx ??= 5\nprintln(x)"), "5\n");
     assert_eq!(run("x = 3\nx ??= 5\nprintln(x)"), "3\n");

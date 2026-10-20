@@ -168,7 +168,9 @@ fn contains_sentinel(e: &Expr) -> bool {
         Expr::Binary { left, right, .. } | Expr::Logic { left, right, .. } => {
             contains_sentinel(left) || contains_sentinel(right)
         }
-        Expr::Unary { operand, .. } => contains_sentinel(operand),
+        Expr::Unary { operand, .. } | Expr::NonNullAssert { operand, .. } => {
+            contains_sentinel(operand)
+        }
         Expr::Ternary { cond, then_expr, else_expr, .. } => {
             contains_sentinel(cond) || contains_sentinel(then_expr) || contains_sentinel(else_expr)
         }

@@ -96,6 +96,17 @@ l = a.len()
 }
 
 #[test]
+fn colors_method_after_non_null_assert() {
+    // `!` 断言后成员照常着色：接收者收窄为 string，len 仍是 method
+    let src = "\
+s: string | null = \"ab\"
+n = s!.len()
+";
+    let m = token_map(src);
+    assert_eq!(m.get(&(1, 7)), Some(&"method"), "断言后的方法");
+}
+
+#[test]
 fn colors_nullable_union_members_in_loop() {
     // 循环下钻惯用形：cur 在 cur = cur.left 后是 TreeNode | null，
     // 其后的成员访问（cur.right）照常着色，不因联合含 null 退化

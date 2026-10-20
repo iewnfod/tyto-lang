@@ -276,7 +276,9 @@ impl<'a> Highlighter<'a> {
                 self.walk_expr(left);
                 self.walk_expr(right);
             }
-            Expr::Unary { operand, .. } => self.walk_expr(operand),
+            Expr::Unary { operand, .. } | Expr::NonNullAssert { operand, .. } => {
+                self.walk_expr(operand)
+            }
             Expr::Ternary { cond, then_expr, else_expr, .. } => {
                 self.walk_expr(cond);
                 self.walk_expr(then_expr);

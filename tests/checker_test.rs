@@ -61,6 +61,24 @@ fn union_types() {
 }
 
 #[test]
+fn non_null_assert_narrows_union() {
+    // `!` 收窄掉 null → 算术放行（与 ?? 同效）
+    assert!(errors("n: number | null = null\nm = n! + 1").is_empty());
+    // 收窄后赋给具体类型：n! 已是 number
+    assert!(errors("n: number | null = null\nm: number = n!").is_empty());
+    // 对照：不加 `!` 赋给 number 报错
+    let e = errors("n: number | null = null\nm: number = n");
+    assert_eq!(e.len(), 1, "{:?}", e);
+    // 成员链上断言：string 收窄后取方法
+    assert!(errors("s: string | null = null\nn = s!.len()").is_empty());
+    // 对不可空类型用 `!`：放行（渐进不误报）；null! 得 any
+    assert!(errors("x: number = 1\ny = x!").is_empty());
+    assert!(errors("y: number = null!").is_empty());
+    // 语句结尾的 `!`（EOL 终结）不产生解析噪声
+    assert!(errors("n: number | null = null\nm = n!\nk = m + 1").is_empty());
+}
+
+#[test]
 fn generic_function_inference() {
     // 泛型函数：调用点实参推导
     let src = "function id<T>(x: T) -> T { return x }\na = id(42)\nb: number = a";
