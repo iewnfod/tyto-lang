@@ -1093,6 +1093,34 @@ fn is_operator_precedence() {
 }
 
 #[test]
+fn is_not_operator_desugars_to_unary() {
+    // x is not T 脱糖为 Unary(Not, Is(x, T))
+    match expr("x is not TreeNode") {
+        Expr::Unary { op: UnaryOp::Not, operand, .. } => {
+            assert!(matches!(*operand, Expr::Is { .. }));
+        }
+        other => panic!("expected Unary(Not), got {:?}", other),
+    }
+    // x is not EMPTY 同样成立（is EMPTY 特例）
+    assert!(matches!(
+        expr("x is not EMPTY"),
+        Expr::Unary { op: UnaryOp::Not, .. }
+    ));
+    // 优先级与 is 一致：a is not T == true → (a is not T) == true
+    match expr("a is not T == true") {
+        Expr::Binary { op: BinaryOp::Eq, left, .. } => {
+            assert!(matches!(*left, Expr::Unary { op: UnaryOp::Not, .. }));
+        }
+        other => panic!("expected Binary(Eq), got {:?}", other),
+    }
+    // not 是关键字：不能单独开头表达式，也不能作变量名
+    assert!(program_fails("not x"));
+    assert!(program_fails("not = 1"));
+    // is 后连续两个 not 报错（只允许一个）
+    assert!(program_fails("x is not not T"));
+}
+
+#[test]
 fn struct_impl_interface_errors() {
     // interface 方法不能带函数体
     assert!(program_fails("interface A { function f() { return 1 } }"));

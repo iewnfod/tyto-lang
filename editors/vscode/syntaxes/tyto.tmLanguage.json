@@ -195,7 +195,7 @@
                 },
                 {
                     "name": "keyword.operator.expression.tyto",
-                    "match": "\\bis\\b"
+                    "match": "\\b(is|not)\\b"
                 },
                 {
                     "name": "constant.language.tyto",

@@ -26,7 +26,7 @@ pub type MethodSig = cb::MethodRet;
 pub const KEYWORDS: &[&str] = &[
     "if", "else", "while", "for", "in", "break", "continue", "return",
     "function", "new", "true", "false", "null", "self",
-    "struct", "impl", "interface", "is",
+    "struct", "impl", "interface", "is", "not",
 ];
 
 /// 内置类展示签名（名字集合与 checker::builtins::class_instance 同源，

@@ -193,6 +193,33 @@ fn is_requires_struct_or_interface() {
 }
 
 #[test]
+fn is_empty_sentinel_check() {
+    // EMPTY 特例：右侧接 EMPTY 哨兵，判断左侧是否为空哨兵（区别于 null）
+    assert_eq!(run("println(EMPTY is EMPTY, 1 is EMPTY, null is EMPTY)"), "true false false\n");
+    // 典型场景：容器空取值返回 EMPTY，用 is 判空
+    assert_eq!(run("s = new Stack()\nprintln(s.pop() is EMPTY)"), "true\n");
+    assert_eq!(run("s = new Stack()\ns.push(1)\nprintln(s.pop() is EMPTY)"), "false\n");
+}
+
+#[test]
+fn is_not_operator_runtime() {
+    // x is not T：否定形式，等价 !(x is T)
+    let src = "struct TreeNode { v }\n\
+               t = new TreeNode(1)\n\
+               println(t is not TreeNode, 1 is not TreeNode)\n\
+               println(1 is not EMPTY, EMPTY is not EMPTY, null is not EMPTY)";
+    assert_eq!(run(src), "false true\ntrue false true\n");
+    // 惯用法：过滤异构集合时排除非目标类型
+    let src2 = "struct A { x }\n\
+                a = new A(1)\n\
+                items = [a, 2, \"s\"]\n\
+                n = 0\n\
+                for it in items { if it is not A { n = n + 1 } }\n\
+                println(n)";
+    assert_eq!(run(src2), "2\n");
+}
+
+#[test]
 fn is_precedence_in_expressions() {
     let src = "interface F { function f() }\n\
                struct P { x }\n\

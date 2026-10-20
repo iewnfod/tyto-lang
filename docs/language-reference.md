@@ -637,10 +637,11 @@ println(o is Shape)   // true：普通对象按函数字段结构化匹配
 
 ### `is` 运算符
 
-优先级与 `==`/`!=` 同级、左结合：
+优先级与 `==`/`!=` 同级、左结合；否定形式 `is not` 是语法糖，等价于 `!(x is T)`：
 
 ```
 if s is Shape && s.area() > 10 { ... }
+if s is not Shape { println("不是形状") }
 println(p is T == true)
 ```
 
@@ -648,10 +649,13 @@ println(p is T == true)
 |---|---|
 | struct（如 `p is Point`） | **名义**：p 是该 struct 的实例 → true；其余值（含其它 struct 的实例）→ false |
 | interface（如 `p is Shape`） | **结构化**：实例 → 其 struct 的 impl 方法表覆盖接口全部方法名；对象 → 这些名字的字段都是函数；其余类型 → false |
-| 其它值 | **运行时报错**（右侧必须是 struct 或 interface） |
+| `EMPTY`（如 `x is EMPTY`） | **哨兵**：x 是 EMPTY 哨兵 → true；其余值（含 null）→ false |
+| 其它值 | **运行时报错**（右侧必须是 struct、interface 或 EMPTY） |
 
 - 接口检查只看**方法名**，不看参数个数
 - `is` 不做任何隐式转换；实例与 struct 名之间的判断恒为布尔值，不会报错
+- `x is not T`（含 `x is not EMPTY`）为否定形式语法糖，解析期脱糖为 `!(x is T)`，优先级与 `is` 相同；`not` 是关键字，仅出现在 `is` 之后
+- `x is EMPTY` 是 `EMPTY` 在 `is` 右侧的唯一特例：容器空取值（`pop()`/`peek()` 等）的判空惯用法，与 `null` 判断互不相干
 
 完整示例见 `examples/shapes.tyto`（异构集合 + `is` 过滤）。
 

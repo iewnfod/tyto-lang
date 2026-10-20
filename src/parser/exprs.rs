@@ -81,14 +81,24 @@ impl Parser {
                     left = Expr::Binary { left: Box::new(left), op, right: Box::new(right), span };
                 }
                 // `p is T`：与 == 同级、左结合；右侧是类型名表达式（标识符/成员链）
+                // `p is not T` 是语法糖：直接脱糖为 `!(p is T)`，AST 与手写否定同构
                 Some(TokenKind::Keyword(Keyword::Is)) => {
                     self.advance();
+                    let negated = self.check(&TokenKind::Keyword(Keyword::Not));
+                    if negated {
+                        self.advance();
+                    }
                     let target = self.parse_unary()?;
                     let span = left.span();
-                    left = Expr::Is {
+                    let is_expr = Expr::Is {
                         operand: Box::new(left),
                         target: Box::new(target),
                         span,
+                    };
+                    left = if negated {
+                        Expr::Unary { op: UnaryOp::Not, operand: Box::new(is_expr), span }
+                    } else {
+                        is_expr
                     };
                 }
                 _ => return Ok(left),

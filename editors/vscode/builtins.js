@@ -5,7 +5,7 @@
 const KEYWORDS = [
     'if', 'else', 'while', 'for', 'in', 'break', 'continue', 'return',
     'function', 'new', 'true', 'false', 'null', 'self',
-    'struct', 'impl', 'interface', 'is', 'let', 'const',
+    'struct', 'impl', 'interface', 'is', 'not', 'let', 'const',
 ];
 
 // [名称, 签名, 文档]

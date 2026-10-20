@@ -148,6 +148,7 @@ pub enum Keyword {
     Impl,
     Interface,
     Is,
+    Not,
     Let,
     Const,
 }
@@ -172,6 +173,7 @@ impl Keyword {
             "impl" => Keyword::Impl,
             "interface" => Keyword::Interface,
             "is" => Keyword::Is,
+            "not" => Keyword::Not,
             "let" => Keyword::Let,
             "const" => Keyword::Const,
             _ => return None,
@@ -197,6 +199,7 @@ impl Keyword {
             Keyword::Impl => "impl",
             Keyword::Interface => "interface",
             Keyword::Is => "is",
+            Keyword::Not => "not",
             Keyword::Let => "let",
             Keyword::Const => "const",
         }

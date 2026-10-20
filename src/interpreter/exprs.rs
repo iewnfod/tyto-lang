@@ -373,10 +373,12 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(ok))
             }
+            // EMPTY 特例：右侧是空哨兵常量，判断左侧是否为 EMPTY（与 null 语义无关）
+            Value::Empty => Ok(Value::Bool(matches!(v, Value::Empty))),
             other => Err(RtError::runtime(
                 Some(span),
                 format!(
-                    "right side of `is` must be a struct or interface, got {}",
+                    "right side of `is` must be a struct, interface or EMPTY, got {}",
                     other.type_name()
                 ),
             )),
