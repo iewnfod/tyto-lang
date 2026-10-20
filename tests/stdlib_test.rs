@@ -211,6 +211,68 @@ fn map_set_is_chainable() {
     );
 }
 
+// ============ Set ============
+
+#[test]
+fn set_basics() {
+    let src = "s = new Set()\n\
+               println(s.is_empty())\n\
+               s.add(\"a\")\n\
+               s.add(2)\n\
+               s.add(true)\n\
+               s.add(\"a\")\n\
+               println(s.len())\n\
+               println(s.contains(\"a\"), s.contains(2), s.contains(\"missing\"))\n\
+               println(s.remove(\"a\"), s.contains(\"a\"), s.len())\n\
+               println(s.remove(\"missing\"))\n\
+               println(s)";
+    assert_eq!(
+        run(src),
+        "true\n3\ntrue true false\ntrue false 2\nfalse\nSet {2, true}\n"
+    );
+}
+
+#[test]
+fn set_init_from_array_dedup() {
+    // 数组初始化去重，保插入序
+    assert_eq!(run("println(new Set([3, 1, 3, 2, 1]))"), "Set {3, 1, 2}\n");
+    assert_eq!(run("println(new Set().is_empty())"), "true\n");
+    assert!(matches!(run_err("new Set(3)"), RtError::Runtime { .. }));
+    assert!(matches!(run_err("new Set(1, 2)"), RtError::Runtime { .. }));
+}
+
+#[test]
+fn set_element_rules() {
+    // 1 与 1.0 同元素（与 Map 键一致的规范化）
+    assert_eq!(
+        run("s = new Set()\ns.add(1)\ns.add(1.0)\nprintln(s.len(), s.contains(1))"),
+        "1 true\n"
+    );
+    // null 可做元素
+    assert_eq!(run("s = new Set()\ns.add(null)\nprintln(s.contains(null))"), "true\n");
+    // 数组不能做元素
+    assert!(matches!(run_err("new Set().add([])"), RtError::Runtime { .. }));
+}
+
+#[test]
+fn set_add_is_chainable_and_to_array() {
+    assert_eq!(run("s = new Set().add(\"a\").add(\"b\")\nprintln(s.len())"), "2\n");
+    // to_array 保插入序
+    assert_eq!(run("println(new Set([2, 1]).to_array())"), "[2, 1]\n");
+}
+
+#[test]
+fn set_for_in_iteration() {
+    // 保序去重迭代
+    let src = "out = []\nfor x in new Set([\"b\", \"a\", \"b\"]) { out.push(x) }\nprintln(out)";
+    assert_eq!(run(src), "[\"b\", \"a\"]\n");
+}
+
+#[test]
+fn set_type_and_len_global() {
+    assert_eq!(run("s = new Set()\nprintln(type(s), len(s.add(1)))"), "set 1\n");
+}
+
 // ============ 堆 ============
 
 #[test]

@@ -154,6 +154,23 @@ fn map_value_or_null(t: &Type) -> Type {
     normalize_union(vec![map_value_of(t), Type::Null])
 }
 
+/// Set 元素类型（接收者是 Set<E> 时取 E，否则 Any）
+fn set_elem_of(t: &Type) -> Type {
+    match t {
+        Type::Set(e) => (**e).clone(),
+        _ => Type::Any,
+    }
+}
+
+const SET_METHODS: &[MethodRet] = &[
+    MethodRet { name: "add", sig: ".add(x) → set", doc: "插入元素（已存在则无操作）；返回自身可链式", ret: t_self },
+    MethodRet { name: "contains", sig: ".contains(x) → bool", doc: "是否包含元素", ret: t_bool },
+    MethodRet { name: "remove", sig: ".remove(x) → bool", doc: "删除元素；返回是否删除", ret: t_bool },
+    MethodRet { name: "len", sig: ".len() → number", doc: "元素数", ret: t_number },
+    MethodRet { name: "is_empty", sig: ".is_empty() → bool", doc: "是否为空", ret: t_bool },
+    MethodRet { name: "to_array", sig: ".to_array() → array", doc: "元素数组（保插入序）", ret: |t| Type::Array(Box::new(set_elem_of(t))) },
+];
+
 const HEAP_METHODS: &[MethodRet] = &[
     MethodRet { name: "push", sig: ".push(x)", doc: "入堆（仅数字）", ret: t_null },
     MethodRet { name: "pop", sig: ".pop() → number", doc: "移除并返回堆顶；空堆返回 EMPTY", ret: |_| normalize_union(vec![Type::Number, Type::Empty]) },
@@ -185,8 +202,8 @@ pub const GLOBAL_FNS: &[GlobalFnInfo] = &[
     GlobalFnInfo { name: "input", sig: "input() → string | null", doc: "读入一行（去行尾换行）；EOF 返回 null", ret: g_str_or_null, arity: Some(0) },
     GlobalFnInfo { name: "num", sig: "num(x) → number", doc: "字符串/数字转数字；非法字符串报错", ret: g_number, arity: Some(1) },
     GlobalFnInfo { name: "str", sig: "str(x) → string", doc: "任意值转字符串", ret: g_str, arity: Some(1) },
-    GlobalFnInfo { name: "len", sig: "len(x) → number", doc: "长度：数组 / 字符串 / 对象 / Map / 堆 / 栈 / 队列", ret: g_number, arity: Some(1) },
-    GlobalFnInfo { name: "type", sig: "type(x) → string", doc: "类型名：number/string/bool/null/array/object/map/maxheap/minheap/function", ret: g_str, arity: Some(1) },
+    GlobalFnInfo { name: "len", sig: "len(x) → number", doc: "长度：数组 / 字符串 / 对象 / Map / Set / 堆 / 栈 / 队列", ret: g_number, arity: Some(1) },
+    GlobalFnInfo { name: "type", sig: "type(x) → string", doc: "类型名：number/string/bool/null/array/object/map/set/maxheap/minheap/function", ret: g_str, arity: Some(1) },
     GlobalFnInfo { name: "has", sig: "has(obj, \"field\") → bool", doc: "对象是否有某字段（Map 请用 .contains_key() 方法）", ret: g_bool, arity: Some(2) },
     GlobalFnInfo { name: "floor", sig: "floor(x) → number", doc: "向下取整", ret: g_number, arity: Some(1) },
     GlobalFnInfo { name: "ceil", sig: "ceil(x) → number", doc: "向上取整", ret: g_number, arity: Some(1) },
@@ -224,6 +241,7 @@ pub fn all_methods() -> Vec<&'static MethodRet> {
         .iter()
         .chain(STRING_METHODS)
         .chain(MAP_METHODS)
+        .chain(SET_METHODS)
         .chain(HEAP_METHODS)
         .chain(STACK_METHODS)
         .chain(QUEUE_METHODS)
@@ -246,6 +264,7 @@ fn table_for(recv: &Type) -> Option<&'static [MethodRet]> {
         Type::Array(_) => Some(ARRAY_METHODS),
         Type::Str => Some(STRING_METHODS),
         Type::Map(..) => Some(MAP_METHODS),
+        Type::Set(_) => Some(SET_METHODS),
         Type::MaxHeap | Type::MinHeap => Some(HEAP_METHODS),
         Type::Stack => Some(STACK_METHODS),
         Type::Queue => Some(QUEUE_METHODS),
@@ -265,6 +284,8 @@ pub fn method_params(recv: &Type, name: &str) -> Option<(Vec<Type>, bool)> {
         (Type::Map(k, _), "get" | "contains_key" | "remove") => {
             Some((vec![(**k).clone()], false))
         }
+        // Set 元素类型约束 add/contains/remove
+        (Type::Set(e), "add" | "contains" | "remove") => Some((vec![(**e).clone()], false)),
         // 堆只存数字（运行时强制）；empty 哨兵按惯用形放行（median 流等靠
         // len 不变量保证非空——与算术投影的 empty 宽容一致）
         (Type::MaxHeap, "push") | (Type::MinHeap, "push") => {
@@ -304,6 +325,7 @@ pub fn namespace_fn_return(ns: &str, name: &str) -> Option<Type> {
 pub fn class_instance(name: &str) -> Option<Type> {
     Some(match name {
         "Map" => Type::Map(Box::new(Type::Any), Box::new(Type::Any)),
+        "Set" => Type::Set(Box::new(Type::Any)),
         "MaxHeap" => Type::MaxHeap,
         "MinHeap" => Type::MinHeap,
         "Stack" => Type::Stack,
@@ -313,7 +335,7 @@ pub fn class_instance(name: &str) -> Option<Type> {
 }
 
 pub fn is_builtin_class(name: &str) -> bool {
-    matches!(name, "Map" | "MaxHeap" | "MinHeap" | "Stack" | "Queue")
+    matches!(name, "Map" | "Set" | "MaxHeap" | "MinHeap" | "Stack" | "Queue")
 }
 
 /// 全局常量类型
@@ -360,6 +382,7 @@ mod tests {
             .iter()
             .chain(STRING_METHODS)
             .chain(MAP_METHODS)
+            .chain(SET_METHODS)
             .chain(HEAP_METHODS)
             .chain(STACK_METHODS)
             .chain(QUEUE_METHODS)

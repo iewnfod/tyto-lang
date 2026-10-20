@@ -69,6 +69,7 @@ impl Interpreter {
         scope::define(g, "Stack", Value::NativeClass(NativeClass::Stack));
         scope::define(g, "Queue", Value::NativeClass(NativeClass::Queue));
         scope::define(g, "Map", Value::NativeClass(NativeClass::Map));
+        scope::define(g, "Set", Value::NativeClass(NativeClass::Set));
         scope::define(g, "print", Value::NativeFn("print"));
         scope::define(g, "println", Value::NativeFn("println"));
         for name in [

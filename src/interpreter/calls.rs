@@ -146,7 +146,7 @@ impl Interpreter {
         let Value::NativeClass(kind) = class else {
             return Err(RtError::runtime(
                 Some(span),
-                "only native classes (Map / MaxHeap / MinHeap / Stack / Queue) and structs can be constructed",
+                "only native classes (Map / Set / MaxHeap / MinHeap / Stack / Queue) and structs can be constructed",
             ));
         };
         match kind {
@@ -158,6 +158,20 @@ impl Interpreter {
                     ));
                 }
                 Ok(Value::Map(Rc::new(RefCell::new(crate::value::MapObj::default()))))
+            }
+            NativeClass::Set => {
+                let items = eval_init_items(self, args, *kind, span)?;
+                let mut set = crate::value::SetObj::default();
+                for item in items {
+                    let k = crate::value::MapKey::from_value(&item).ok_or_else(|| {
+                        RtError::runtime(
+                            Some(span),
+                            format!("set elements must be number/string/bool/null, got {}", item.type_name()),
+                        )
+                    })?;
+                    set.items.insert(k);
+                }
+                Ok(Value::Set(Rc::new(RefCell::new(set))))
             }
             NativeClass::Stack => {
                 let items = eval_init_items(self, args, *kind, span)?;

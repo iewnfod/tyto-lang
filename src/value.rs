@@ -1,6 +1,6 @@
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, collections::{BinaryHeap, VecDeque}, rc::Rc};
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
 use crate::{ast::Stmt, scope::ScopeRef};
 
@@ -91,6 +91,12 @@ pub struct MapObj {
     pub entries: IndexMap<MapKey, Value>,
 }
 
+/// `new Set()`：原始类型元素去重，保插入序（元素规范化同 Map 键）
+#[derive(Clone, Debug, Default)]
+pub struct SetObj {
+    pub items: IndexSet<MapKey>,
+}
+
 /// 用户函数：参数、函数体与其定义时的闭包环境
 #[derive(Clone, Debug)]
 pub struct FuncObj {
@@ -127,6 +133,7 @@ pub struct InstanceObj {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeClass {
     Map,
+    Set,
     MaxHeap,
     MinHeap,
     Stack,
@@ -137,6 +144,7 @@ impl NativeClass {
     pub fn name(&self) -> &'static str {
         match self {
             NativeClass::Map => "Map",
+            NativeClass::Set => "Set",
             NativeClass::MaxHeap => "MaxHeap",
             NativeClass::MinHeap => "MinHeap",
             NativeClass::Stack => "Stack",
@@ -168,6 +176,7 @@ pub enum Value {
     Array(Rc<RefCell<Vec<Value>>>),
     Obj(Rc<RefCell<ObjObj>>),
     Map(Rc<RefCell<MapObj>>),
+    Set(Rc<RefCell<SetObj>>),
     MaxHeap(Rc<RefCell<BinaryHeap<HeapVal>>>),
     MinHeap(Rc<RefCell<BinaryHeap<std::cmp::Reverse<HeapVal>>>>),
     Stack(Rc<RefCell<Vec<Value>>>),
@@ -223,6 +232,14 @@ impl Value {
                     .map(|(k, v)| format!("{}: {}", k.to_display(), v.to_repr()))
                     .collect();
                 format!("Map {{{}}}", items.join(", "))
+            }
+            Value::Set(s) => {
+                let items_set = &s.borrow().items;
+                if items_set.is_empty() {
+                    return "Set {}".into();
+                }
+                let items: Vec<String> = items_set.iter().map(|k| k.to_display()).collect();
+                format!("Set {{{}}}", items.join(", "))
             }
             Value::MaxHeap(h) => {
                 // 堆内顺序不保证，打印时按有序输出便于调试
@@ -296,6 +313,7 @@ impl Value {
             Value::Array(_) => Cow::Borrowed("array"),
             Value::Obj(_) => Cow::Borrowed("object"),
             Value::Map(_) => Cow::Borrowed("map"),
+            Value::Set(_) => Cow::Borrowed("set"),
             Value::MaxHeap(_) => Cow::Borrowed("maxheap"),
             Value::MinHeap(_) => Cow::Borrowed("minheap"),
             Value::Stack(_) => Cow::Borrowed("stack"),
@@ -321,6 +339,7 @@ pub fn eq_value(a: &Value, b: &Value) -> bool {
         (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
         (Value::Obj(x), Value::Obj(y)) => Rc::ptr_eq(x, y),
         (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+        (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
         (Value::MaxHeap(x), Value::MaxHeap(y)) => Rc::ptr_eq(x, y),
         (Value::MinHeap(x), Value::MinHeap(y)) => Rc::ptr_eq(x, y),
         (Value::Stack(x), Value::Stack(y)) => Rc::ptr_eq(x, y),

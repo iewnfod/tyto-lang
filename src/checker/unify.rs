@@ -32,6 +32,11 @@ pub(crate) fn unify(ast: &TypeAst, t: &Type, type_params: &[String], sols: &mut 
                 unify(inner, e, type_params, sols);
             }
         }
+        TypeAst::Generic(n, args, _) if n == "Set" => {
+            if let (Some(inner), Type::Set(e)) = (args.first(), t) {
+                unify(inner, e, type_params, sols);
+            }
+        }
         TypeAst::Generic(n, args, _) => {
             if let Type::Struct(n2, targs) = t {
                 if n == n2 {
@@ -57,6 +62,7 @@ pub(crate) fn subst(t: &Type, sols: &HashMap<String, Type>) -> Type {
     match t {
         Type::TypeVar(n) => sols.get(n).cloned().unwrap_or(Type::Any),
         Type::Array(e) => Type::Array(Box::new(subst(e, sols))),
+        Type::Set(e) => Type::Set(Box::new(subst(e, sols))),
         Type::Map(k, v) => {
             Type::Map(Box::new(subst(k, sols)), Box::new(subst(v, sols)))
         }

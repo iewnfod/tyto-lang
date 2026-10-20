@@ -37,6 +37,7 @@ pub const CLASSES: &[(&str, &str, &str)] = &[
     ("Stack", "new Stack() / new Stack(arr)", "栈（Vec，LIFO）；push/pop/peek/len/is_empty，空栈 pop/peek 返回 EMPTY；数组顺序 = 底→顶"),
     ("Queue", "new Queue() / new Queue(arr)", "队列（VecDeque，FIFO）；push_back/pop_front/front/back/len/is_empty，空队列取值返回 EMPTY；数组顺序 = 队头→队尾"),
     ("Map", "new Map()", "保序哈希表；键限 number/string/bool/null；get/insert/contains_key/remove/len/keys/values"),
+    ("Set", "new Set() / new Set(arr)", "去重集合（保插入序）；元素限 number/string/bool/null；add/contains/remove/len/is_empty/to_array，可 for-in 迭代"),
 ];
 
 pub const CONSTANTS: &[(&str, &str, &str)] = &[
@@ -60,6 +61,8 @@ pub const TYPES: &[(&str, &str, &str)] = &[
     ("any", "any", "任意类型（标注缺省值）"),
     ("Array", "Array", "array 的别名写法"),
     ("Map", "Map<K, V>", "保序哈希表类型，如 Map<string, number>"),
+    ("set", "set", "去重集合类型；泛型写法 Set<T>"),
+    ("Set", "Set<T>", "去重集合类型，如 Set<string>"),
 ];
 
 /// 全部内置全局函数（补全展示用）

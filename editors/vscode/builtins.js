@@ -15,8 +15,8 @@ const GLOBALS = [
     ['input', 'input() → string | null', '读入一行；EOF 返回 null'],
     ['num', 'num(x) → number', '字符串/数字转数字；非法字符串报错'],
     ['str', 'str(x) → string', '任意值转字符串'],
-    ['len', 'len(x) → number', '长度：数组 / 字符串 / 对象 / Map / 堆 / 栈 / 队列'],
-    ['type', 'type(x) → string', '类型名：number/string/bool/null/array/object/map/maxheap/minheap/function'],
+    ['len', 'len(x) → number', '长度：数组 / 字符串 / 对象 / Map / Set / 堆 / 栈 / 队列'],
+    ['type', 'type(x) → string', '类型名：number/string/bool/null/array/object/map/set/maxheap/minheap/function'],
     ['has', 'has(obj, "field") → bool', '对象是否有某字段（Map 请用 .contains_key() 方法）'],
     ['floor', 'floor(x) → number', '向下取整'],
     ['ceil', 'ceil(x) → number', '向上取整'],
@@ -34,6 +34,7 @@ const CLASSES = [
     ['Stack', 'new Stack() / new Stack(arr)', '栈（Vec，LIFO）；push/pop/peek/len/is_empty，空栈 pop/peek 返回 EMPTY；数组顺序 = 底→顶'],
     ['Queue', 'new Queue() / new Queue(arr)', '队列（VecDeque，FIFO）；push_back/pop_front/front/back/len/is_empty，空队列取值返回 EMPTY；数组顺序 = 队头→队尾'],
     ['Map', 'new Map()', '保序哈希表；键限 number/string/bool/null；get/insert/contains_key/remove/len/keys/values'],
+    ['Set', 'new Set() / new Set(arr)', '去重集合（保插入序）；元素限 number/string/bool/null；add/contains/remove/len/is_empty/to_array，可 for-in 迭代'],
 ];
 
 const CONSTANTS = [
@@ -56,6 +57,8 @@ const TYPES = [
     ['any', 'any', '任意类型（标注缺省值）'],
     ['Array', 'Array', 'array 的别名写法'],
     ['Map', 'Map<K, V>', '保序哈希表类型，如 Map<string, number>'],
+    ['set', 'set', '去重集合类型；泛型写法 Set<T>'],
+    ['Set', 'Set<T>', '去重集合类型，如 Set<string>'],
 ];
 
 // 无类型信息：`.` 后给出所有原生方法，detail 标注适用类型
@@ -67,8 +70,8 @@ const METHODS = [
     ['pop_front', '.pop_front()', 'queue 出队（队头）；空返回 EMPTY'],
     ['front', '.front()', 'queue 队头（不移除）；空返回 EMPTY'],
     ['back', '.back()', 'queue 队尾（不移除）；空返回 EMPTY'],
-    ['len', '.len()', 'array / string / map / maxheap / minheap / stack / queue'],
-    ['is_empty', '.is_empty()', 'array / string / map / maxheap / minheap / stack / queue'],
+    ['len', '.len()', 'array / string / map / set / maxheap / minheap / stack / queue'],
+    ['is_empty', '.is_empty()', 'array / string / map / set / maxheap / minheap / stack / queue'],
     // 命名空间 fs.* / sys.*（fs.foo() 形式调用）
     ['read_file', 'fs.read_file(path) → string', '整文件读入；不存在/非 UTF-8 报错'],
     ['read_lines', 'fs.read_lines(path) → array', '按行读入（去行尾换行）'],
@@ -79,7 +82,7 @@ const METHODS = [
     ['shell', 'sys.shell(cmd) → {status, stdout, stderr}', 'sh -c 执行；非零退出不报错；输出原样'],
     ['get_env', 'sys.get_env(name) → string | null', '环境变量；未设置返回 null'],
     ['args', 'sys.args() → array', '脚本命令行参数'],
-    ['contains', '.contains(x)', 'array / string 是否包含'],
+    ['contains', '.contains(x)', 'array / string / set 是否包含'],
     ['index_of', '.index_of(x)', 'array / string 首次出现的下标；未找到 -1'],
     ['join', '.join(sep?)', 'array 连接为字符串；默认 ","'],
     ['sort', '.sort() / .sort(f)', 'array 就地排序并返回自身；比较器 f(a,b)→number，负数在前'],
@@ -100,9 +103,11 @@ const METHODS = [
     ['get', '.get(k)', 'map 取值；缺失返回 null'],
     ['insert', '.insert(k, v)', 'map 写入；返回自身可链式'],
     ['contains_key', '.contains_key(k)', 'map 是否有键'],
-    ['remove', '.remove(k)', 'map 删除；返回是否删除'],
+    ['remove', '.remove(k)', 'map 删除；返回是否删除；set 删除元素'],
     ['keys', '.keys()', 'map → 键数组（保序）'],
     ['values', '.values()', 'map → 值数组'],
+    ['add', '.add(x) → set', 'set 插入元素（去重）；返回自身可链式'],
+    ['to_array', '.to_array() → array', 'set → 元素数组（保插入序）'],
 ];
 
 const GLOBAL_MAP = new Map(GLOBALS.map(([k, sig, doc]) => [k, { sig, doc }]));

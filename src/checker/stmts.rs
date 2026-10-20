@@ -44,6 +44,7 @@ impl Checker {
                             Type::Array(el) => *el,
                             Type::Str => Type::Str,
                             Type::Any => Type::Any,
+                            Type::Set(el) => *el,
                             Type::Map(..) => {
                                 // Map 迭代未在语言参考中定义，回退 Any
                                 Type::Any

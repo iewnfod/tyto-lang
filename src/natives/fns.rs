@@ -58,6 +58,7 @@ pub fn call_global(
                 Value::Obj(o) => o.borrow().fields.len(),
                 Value::Instance(i) => i.borrow().fields.len(),
                 Value::Map(m) => m.borrow().entries.len(),
+                Value::Set(s) => s.borrow().items.len(),
                 Value::MaxHeap(h) => h.borrow().len(),
                 Value::MinHeap(h) => h.borrow().len(),
                 other => {

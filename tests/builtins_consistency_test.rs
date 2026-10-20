@@ -14,6 +14,7 @@ fn probe_tys() -> Vec<Type> {
         Type::Array(Box::new(Type::Any)),
         Type::Str,
         Type::Map(Box::new(Type::Any), Box::new(Type::Any)),
+        Type::Set(Box::new(Type::Any)),
         Type::MaxHeap,
         Type::MinHeap,
         Type::Stack,
@@ -29,8 +30,8 @@ fn classes_match_checker() {
         assert!(checker::builtins::class_instance(name).is_some());
         assert!(!sig.is_empty() && !doc.is_empty());
     }
-    // 反向：checker 认可的类都在展示表里（当前五个）
-    for name in ["Map", "MaxHeap", "MinHeap", "Stack", "Queue"] {
+    // 反向：checker 认可的类都在展示表里（当前六个）
+    for name in ["Map", "Set", "MaxHeap", "MinHeap", "Stack", "Queue"] {
         assert!(
             builtins::CLASSES.iter().any(|(n, _, _)| *n == name),
             "内置类 {name} 缺少编辑器展示条目"

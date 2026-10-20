@@ -23,6 +23,8 @@ pub enum Type {
     Array(Box<Type>),
     /// Map<K, V>
     Map(Box<Type>, Box<Type>),
+    /// Set<E>（元素类型；未细化时为 Any）
+    Set(Box<Type>),
     MaxHeap,
     MinHeap,
     Stack,
@@ -69,6 +71,7 @@ impl Type {
                 }
             }
             Type::Map(k, v) => format!("Map<{}, {}>", k.display(), v.display()),
+            Type::Set(e) => format!("Set<{}>", e.display()),
             Type::MaxHeap => "maxheap".into(),
             Type::MinHeap => "minheap".into(),
             Type::Stack => "stack".into(),
@@ -201,6 +204,7 @@ pub fn from_ast(ast: &TypeAst, generics: &[String], structs: &StructRegistry) ->
                 args.iter().map(|a| from_ast(a, generics, structs)).collect();
             match n.as_str() {
                 "Array" => Type::Array(Box::new(conv_args.first().cloned().unwrap_or(Type::Any))),
+                "Set" => Type::Set(Box::new(conv_args.first().cloned().unwrap_or(Type::Any))),
                 "Map" => Type::Map(
                     Box::new(conv_args.first().cloned().unwrap_or(Type::Any)),
                     Box::new(conv_args.get(1).cloned().unwrap_or(Type::Any)),
@@ -245,6 +249,7 @@ fn named(n: &str, generics: &[String], structs: &StructRegistry) -> Type {
         "array" | "Array" => Type::Array(Box::new(Type::Any)),
         "object" => Type::Object(Rc::from(Vec::new())),
         "map" | "Map" => Type::Map(Box::new(Type::Any), Box::new(Type::Any)),
+        "set" | "Set" => Type::Set(Box::new(Type::Any)),
         "maxheap" | "MaxHeap" => Type::MaxHeap,
         "minheap" | "MinHeap" => Type::MinHeap,
         "stack" | "Stack" => Type::Stack,
@@ -305,6 +310,7 @@ pub fn assignable(src: &Type, dst: &Type) -> bool {
         (Type::Union(ms), _) => ms.iter().all(|m| assignable(m, dst)),
         (_, Type::Union(ms)) => ms.iter().any(|m| assignable(src, m)),
         (Type::Array(a), Type::Array(b)) => assignable(a, b), // 协变（TS 风格）
+        (Type::Set(a), Type::Set(b)) => assignable(a, b), // 协变（同数组）
         (Type::Map(k1, v1), Type::Map(k2, v2)) => {
             // v1 双参不变（简化）：逆变太难讲清楚，先严格同型 + Any 放行
             assignable(k1, k2) && assignable(v1, v2)

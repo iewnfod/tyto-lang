@@ -259,6 +259,31 @@ fn builtin_method_arg_checks() {
 }
 
 #[test]
+fn set_type_and_method_checks() {
+    // Set<T> 元素类型：to_array → T[]、contains/add 参数约束
+    assert!(errors("s: Set<string> = new Set()\na: string[] = s.to_array()").is_empty());
+    let e = errors("s: Set<string> = new Set()\nn: number[] = s.to_array()");
+    assert_eq!(e.len(), 1, "{:?}", e);
+    assert!(e[0].contains("实际 `string[]`"), "{:?}", e);
+    let e = errors("s: Set<string> = new Set()\ns.add(1)");
+    assert_eq!(e.len(), 1, "{:?}", e);
+    assert!(e[0].contains("第 1 个参数"), "{:?}", e);
+    // add 定长
+    let e = errors("s: Set<string> = new Set()\ns.add(\"a\", \"b\")");
+    assert_eq!(e.len(), 1, "{:?}", e);
+    // 小写 set 别名
+    assert!(errors("s: set<number> = new Set()\nn: number = s.to_array()[0]").is_empty());
+}
+
+#[test]
+fn set_for_in_loop_var_type() {
+    // Set 元素类型 → 循环变量
+    assert!(errors("s: Set<number> = new Set()\nfor x in s {\n    n: number = x\n}").is_empty());
+    let e = errors("s: Set<number> = new Set()\nfor x in s {\n    s2: string = x\n}");
+    assert_eq!(e.len(), 1, "{:?}", e);
+}
+
+#[test]
 fn generic_impl_and_recursive_struct() {
     // 用户场景：递归泛型 struct + impl 声明泛型参数（方法直接引用 T）
     let src = "struct TreeNode<T> {\n\

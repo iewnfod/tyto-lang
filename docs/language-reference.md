@@ -14,6 +14,7 @@
 - [内置类型：Array](#内置类型array)
 - [内置类型：String](#内置类型string)
 - [内置类型：Map](#内置类型map)
+- [内置类型：Set](#内置类型set)
 - [内置类型：MaxHeap / MinHeap](#内置类型maxheap--minheap)
 - [内置类型：Stack / Queue](#内置类型stack--queue)
 - [全局函数](#全局函数)
@@ -90,6 +91,7 @@ let  const
 | array | `"array"` | 引用语义，可变，异构 |
 | object | `"object"` | `{x: 1}`，字符串字段，保序 |
 | map | `"map"` | `new Map()`，键限原始类型，保序 |
+| set | `"set"` | `new Set()`，元素去重保插入序 |
 | maxheap / minheap | `"maxheap"` / `"minheap"` | 数字堆 |
 | stack | `"stack"` | `new Stack()`，LIFO |
 | queue | `"queue"` | `new Queue()`，FIFO |
@@ -152,6 +154,7 @@ const PI: number = 3.14
 number  string  bool  null  empty  any            // 基础类型（any 放行一切）
 number[]  Array<Point>                          // 数组（元素类型参与推导：a[0]、for-in 循环变量）
 Map<string, number>                             // 键值类型：m.get(k) → number | null
+Set<string>                                     // 元素类型：s.to_array() → string[]
 number | null                                   // 联合类型
 Box<number>                                     // 泛型 struct 实例
 {x: number, y: string}                          // 结构化对象类型
@@ -401,11 +404,12 @@ while !h.is_empty() {
 }
 ```
 
-### for-in（数组 / 字符串 / 区间）
+### for-in（数组 / 字符串 / Set / 区间）
 
 ```
 for x in [1, 2, 3] { ... }      // 数组，按索引迭代（迭代中 push 可见）
 for c in "abc" { ... }          // 字符串，逐字符
+for x in new Set([2, 1, 2]) { ... }   // Set，按插入序去重迭代
 for i in 0..n { ... }           // 0 到 n-1
 for i in 1..=n { ... }          // 1 到 n（含端点）
 ```
@@ -725,6 +729,27 @@ m.remove("b")    // true（返回是否删除；保持其余键顺序）
 
 ---
 
+## 内置类型：Set
+
+去重集合，保插入序。**元素只能是 number / string / bool / null**（数组等做元素报错）。
+
+```
+s = new Set()               // 空；或 new Set([3, 1, 3, 2]) 用数组初始化（去重装入）
+s.add("a").add("b")         // add 返回自身，可链式
+s.add("a")                  // 已存在则无操作
+s.contains("a")             // true
+s.remove("a")               // true（返回是否删除；保持其余元素顺序）
+s.len()                     // 2
+s.to_array()                // ["b", ...] —— 按插入顺序
+for x in s { ... }          // 可直接迭代（按插入序）
+```
+
+- 元素规范化同 Map 键：`1` 与 `1.0` 是同一个元素，`-0.0` 归为 `0`
+- 判断存在用 `contains`；`==` 与其他容器一致按引用比较
+- 显示格式 `Set {"a", 1, true}`（字符串带引号）；空集 `Set {}`
+
+---
+
 ## 内置类型：MaxHeap / MinHeap
 
 原生 `BinaryHeap` 实现，只存 number。
@@ -746,7 +771,7 @@ h.pop()                    // 3（最大者；MinHeap 为最小者）
 | len | `len() → number` | |
 | is_empty | `is_empty() → bool` | |
 
-`new` 能构造原生类（Map / MaxHeap / MinHeap / Stack / Queue）与用户 struct（见 [struct 与 impl](#struct-与-impl)）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
+`new` 能构造原生类（Map / Set / MaxHeap / MinHeap / Stack / Queue）与用户 struct（见 [struct 与 impl](#struct-与-impl)）；`MaxHeap()` 直接调用会报错并提示加 `new`。经典双堆中位数用法见 `examples/median.tyto`。
 
 ---
 
@@ -801,7 +826,7 @@ if line == null { println("结束") }
 |---|---|---|
 | num | `num(x) → number` | number 原样返回；string 去空白后解析（非法报错） |
 | str | `str(x) → string` | 按显示格式转字符串 |
-| len | `len(x) → number` | 数组/字符串/对象/Map/堆；其余报错 |
+| len | `len(x) → number` | 数组/字符串/对象/Map/Set/堆；其余报错 |
 | type | `type(x) → string` | 见[类型表](#类型与值) |
 | has | `has(obj, "field") → bool` | 仅对象：是否有某字段（Map 请用 `contains_key` 方法） |
 

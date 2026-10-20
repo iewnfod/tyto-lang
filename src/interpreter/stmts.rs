@@ -355,6 +355,20 @@ impl Interpreter {
                             }
                         }
                     }
+                    Value::Set(set) => {
+                        // 迭代期间快照元素，避免循环体修改集合导致混乱
+                        let items: Vec<_> =
+                            set.borrow().items.iter().map(|k| k.to_value()).collect();
+                        for item in items {
+                            scope::assign(&self.scope, var, item)
+                                .map_err(|e| e.with_span(body.span()))?;
+                            match self.execute(body)? {
+                                Flow::Break => break,
+                                Flow::Return(v) => return Ok(Flow::Return(v)),
+                                _ => {}
+                            }
+                        }
+                    }
                     other => {
                         return Err(RtError::runtime(
                             Some(expr.span()),

@@ -122,8 +122,8 @@ fn items_for_recv(recv: &Type, snap: &mut ScopeSnapshot) -> Vec<CompleteItem> {
         Type::Number | Type::Bool | Type::Null | Type::Empty | Type::Func(_)
         | Type::StructDef(_) | Type::InterfaceDef(_) => Vec::new(),
         // 内置容器类型（元素/键值形参不影响方法表分发）
-        Type::Array(_) | Type::Str | Type::Map(..) | Type::MaxHeap | Type::MinHeap
-        | Type::Stack | Type::Queue => {
+        Type::Array(_) | Type::Str | Type::Map(..) | Type::Set(_) | Type::MaxHeap
+        | Type::MinHeap | Type::Stack | Type::Queue => {
             match builtins::methods_for(recv) {
                 Some(ms) => ms
                     .iter()
